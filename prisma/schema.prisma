@@ -1,0 +1,219 @@
+// Photographer Prompt Hub - Prisma Schema
+// Optimized for Neon PostgreSQL with connection pooling
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  EDITOR
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum JobType {
+  PUBLISH_POST
+  CLEANUP_TEMP_ASSETS
+  RETRY_PRIVATE_REPLY
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+  IGNORED
+}
+
+model User {
+  id           String             @id @default(cuid())
+  email        String             @unique
+  passwordHash String
+  name         String
+  role         Role               @default(ADMIN)
+  accounts     InstagramAccount[]
+  activityLogs ActivityLog[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([email])
+}
+
+model InstagramAccount {
+  id                   String              @id @default(cuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  igUserId             String              @unique
+  username             String
+  name                 String?
+  profilePictureUrl    String?
+  accessTokenEncrypted String              // AES-256-GCM encrypted token
+  tokenExpiresAt       DateTime?
+  isConnected          Boolean             @default(true)
+  permissions          String?             // Comma-separated or JSON list of granted scopes
+  posts                Post[]
+  automationSettings   AutomationSetting[]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  @@index([igUserId])
+  @@index([userId])
+}
+
+model Prompt {
+  id                 String          @id @default(cuid())
+  title              String
+  originalPrompt     String          @db.Text
+  category           String
+  tags               String          // Comma-separated tags or JSON string
+  generationSettings String?         @db.Text // JSON string: Aspect ratio, camera, lighting, engine, etc.
+  slug               String          @unique
+  isArchived         Boolean         @default(false)
+  viewCount          Int             @default(0)
+  copyCount          Int             @default(0)
+  posts              Post[]
+  promptRequests     PromptRequest[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([slug])
+  @@index([category])
+  @@index([isArchived])
+  @@index([createdAt])
+}
+
+model Post {
+  id                 String             @id @default(cuid())
+  promptId           String
+  prompt             Prompt             @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  instagramAccountId String?
+  instagramAccount   InstagramAccount?  @relation(fields: [instagramAccountId], references: [id], onDelete: SetNull)
+  caption            String             @db.Text
+  hashtags           String             @db.Text // Comma or space separated hashtags
+  commentKeyword     String             // Configured keyword to trigger prompt delivery (e.g. BRIDAL)
+  mediaType          String             @default("IMAGE") // IMAGE, CAROUSEL, REELS
+  temporaryImageUrl  String?            @db.Text // Ephemeral storage URL
+  temporaryAssetKey  String?            // Reference key for deletion after publish
+  instagramMediaId   String?            @unique
+  instagramPermalink String?            @db.Text
+  status             PostStatus         @default(DRAFT)
+  scheduledFor       DateTime?
+  publishedAt        DateTime?
+  errorMessage       String?            @db.Text
+  retryCount         Int                @default(0)
+  promptRequests     PromptRequest[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([promptId])
+  @@index([instagramAccountId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([instagramMediaId])
+}
+
+model ScheduledJob {
+  id          String    @id @default(cuid())
+  jobType     JobType
+  payload     String    @db.Text // JSON string containing job parameters
+  status      JobStatus @default(PENDING)
+  runAt       DateTime
+  lockedAt    DateTime?
+  lockedBy    String?   // Worker instance identifier
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  lastError   String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt])
+  @@index([lockedAt])
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  eventId     String    @unique // Meta webhook event ID or hash for idempotency
+  eventType   String    // comments, mentions, etc.
+  rawPayload  String    @db.Text
+  signature   String?
+  isProcessed Boolean   @default(false)
+  processedAt DateTime?
+  error       String?   @db.Text
+  createdAt   DateTime  @default(now())
+
+  @@index([eventId])
+  @@index([isProcessed])
+}
+
+model PromptRequest {
+  id                String         @id @default(cuid())
+  incomingCommentId String         @unique // Unique Instagram comment ID to guarantee 1 delivery per comment
+  instagramMediaId  String
+  commenterId       String?        // Instagram Scoped ID (IGSID)
+  commentText       String?        @db.Text
+  matchedPostId     String?
+  matchedPost       Post?          @relation(fields: [matchedPostId], references: [id], onDelete: SetNull)
+  matchedPromptId   String?
+  matchedPrompt     Prompt?        @relation(fields: [matchedPromptId], references: [id], onDelete: SetNull)
+  deliveryStatus    DeliveryStatus @default(PENDING)
+  deliveryMethod    String         @default("PRIVATE_REPLY") // PRIVATE_REPLY, DIRECT_MESSAGE
+  privateReplyId    String?        // ID returned by Meta upon sending private reply
+  retryCount        Int            @default(0)
+  errorMessage      String?        @db.Text
+  deliveredAt       DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([incomingCommentId])
+  @@index([instagramMediaId])
+  @@index([deliveryStatus])
+  @@index([matchedPostId])
+  @@index([createdAt])
+}
+
+model AutomationSetting {
+  id                     String            @id @default(cuid())
+  instagramAccountId     String?           @unique
+  instagramAccount       InstagramAccount? @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  isAutomationEnabled    Boolean           @default(true)
+  globalKeyword          String            @default("PROMPT")
+  replyTemplate          String            @default("Here is the photography prompt you requested: {prompt_url}")
+  maxRepliesPerCommenter Int               @default(1)
+  retentionHours         Int               @default(24) // Hours before temporary assets are deleted
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  action     String   // POST_PUBLISHED, PROMPT_CREATED, PRIVATE_REPLY_SENT, etc.
+  entityType String   // Post, Prompt, PromptRequest, InstagramAccount
+  entityId   String?
+  details    String?  @db.Text // JSON metadata
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}
