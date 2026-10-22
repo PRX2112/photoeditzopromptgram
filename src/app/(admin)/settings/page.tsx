@@ -44,16 +44,35 @@ export default function SettingsPage() {
   );
   const [retentionHours, setRetentionHours] = useState(24);
 
+  const [igStatus, setIgStatus] = useState<{
+    success: boolean;
+    metaConfigured: boolean;
+    appId: string | null;
+    hasSecret: boolean;
+    account: {
+      id: string;
+      isConnected: boolean;
+      username: string;
+      name: string | null;
+      igUserId: string;
+      profilePictureUrl: string | null;
+      tokenExpiresAt: string | null;
+    } | null;
+  } | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+
   const fetchStatusAndSettings = async () => {
     try {
       setLoading(true);
-      const [healthRes, settingsRes] = await Promise.all([
+      const [healthRes, settingsRes, igStatusRes] = await Promise.all([
         fetch("/api/system/health"),
         fetch("/api/automation/settings"),
+        fetch("/api/instagram/status"),
       ]);
 
       const healthJson = await healthRes.json();
       const settingsJson = await settingsRes.json();
+      const igStatusJson = await igStatusRes.json();
 
       if (healthJson.services) setHealth(healthJson);
       if (settingsJson.data) {
@@ -63,10 +82,29 @@ export default function SettingsPage() {
         setReplyTemplate(settingsJson.data.replyTemplate);
         setRetentionHours(settingsJson.data.retentionHours);
       }
+      if (igStatusJson.success) {
+        setIgStatus(igStatusJson);
+      }
     } catch {
       // Fallback
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm("Are you sure you want to disconnect this Instagram account?")) return;
+    try {
+      setDisconnecting(true);
+      const res = await fetch("/api/instagram/disconnect", { method: "POST" });
+      const json = await res.json();
+      if (json.success) {
+        await fetchStatusAndSettings();
+      }
+    } catch (err) {
+      console.error("Disconnect error:", err);
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -239,19 +277,49 @@ export default function SettingsPage() {
           <div className="p-4 rounded-xl bg-[#0e1014] border border-[#1f232d] space-y-4 text-xs">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
-                <p className="font-semibold text-slate-200">Account Connection Status</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Requires an Instagram Professional account (Business or Creator) linked to a Facebook Page.
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-slate-200">Account Connection Status</p>
+                  {igStatus?.account?.isConnected ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      CONNECTED
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      DISCONNECTED
+                    </span>
+                  )}
+                </div>
+                {igStatus?.account?.isConnected ? (
+                  <p className="text-[11px] text-slate-300 mt-1">
+                    Connected to <strong className="text-amber-400">@{igStatus.account.username}</strong>
+                    {igStatus.account.name ? ` (${igStatus.account.name})` : ""} &bull; IG User ID: <code className="text-slate-400">{igStatus.account.igUserId}</code>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Requires an Instagram Professional account (Business or Creator) linked to a Facebook Page.
+                  </p>
+                )}
               </div>
 
-              <a
-                href="/api/instagram/auth"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black text-xs font-semibold transition-all hover:scale-[1.02]"
-              >
-                <Radio className="w-4 h-4" />
-                <span>Connect Instagram Account</span>
-              </a>
+              {igStatus?.account?.isConnected ? (
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-all disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${disconnecting ? "animate-spin" : ""}`} />
+                  <span>{disconnecting ? "Disconnecting..." : "Disconnect Account"}</span>
+                </button>
+              ) : (
+                <a
+                  href="/api/instagram/auth"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black text-xs font-semibold transition-all hover:scale-[1.02]"
+                >
+                  <Radio className="w-4 h-4" />
+                  <span>Connect Instagram Account</span>
+                </a>
+              )}
             </div>
 
             {/* Webhook Configuration Details */}

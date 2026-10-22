@@ -54,53 +54,70 @@ export async function POST(request: NextRequest) {
 
     // 1. If "PUBLISHED" (Publish Now) is requested
     if (data.status === "PUBLISHED") {
-      let publishedMediaId: string | null = null;
-      let publishedPermalink: string | null = null;
-
-      // Check if real Meta account is configured and image URL is valid
-      if (instagramService.isConfigured() && data.temporaryImageUrl) {
-        const fullCaption = `${data.caption}\n\n${data.hashtags}`.trim();
-        const publishResult = await instagramService.publishImagePost(
-          "encrypted_token",
-          "ig_user_id",
-          data.temporaryImageUrl,
-          fullCaption
+      if (!data.temporaryImageUrl) {
+        return NextResponse.json(
+          { error: "An image URL is required to publish to Instagram." },
+          { status: 400 }
         );
-
-        if (publishResult.success) {
-          publishedMediaId = publishResult.mediaId || `ig_${Date.now()}`;
-          publishedPermalink = publishResult.permalink || `https://www.instagram.com/p/${publishedMediaId}/`;
-
-          // Clean up ephemeral asset immediately after successful publish
-          if (data.temporaryAssetKey) {
-            await storageService.deleteTemporaryAsset(data.temporaryAssetKey);
-          }
-        } else {
-          return NextResponse.json(
-            { error: `Instagram publish failed: ${publishResult.error}` },
-            { status: 400 }
-          );
-        }
-      } else {
-        // Mock publication for preview/demonstration
-        publishedMediaId = `1802${Date.now().toString().slice(-8)}`;
-        publishedPermalink = `https://www.instagram.com/p/C${Math.random().toString(36).substring(2, 8)}/`;
-
-        if (data.temporaryAssetKey) {
-          await storageService.deleteTemporaryAsset(data.temporaryAssetKey);
-        }
       }
 
+      if (!instagramService.isConfigured()) {
+        return NextResponse.json(
+          { error: "Meta Instagram credentials (META_APP_ID, META_APP_SECRET) are not configured." },
+          { status: 400 }
+        );
+      }
+
+      const connectedAccount = await dbService.getConnectedInstagramAccount();
+      if (!connectedAccount) {
+        return NextResponse.json(
+          {
+            error:
+              "No connected Instagram Professional account found. Please connect an account in Settings before publishing.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (!connectedAccount.accessTokenEncrypted) {
+        return NextResponse.json(
+          { error: "Connected Instagram account is missing an access token. Please reconnect the account." },
+          { status: 400 }
+        );
+      }
+
+      const fullCaption = `${data.caption}\n\n${data.hashtags}`.trim();
+      const publishResult = await instagramService.publishImagePost(
+        connectedAccount.accessTokenEncrypted,
+        connectedAccount.igUserId,
+        data.temporaryImageUrl,
+        fullCaption
+      );
+
+      if (!publishResult.success || !publishResult.mediaId) {
+        return NextResponse.json(
+          { error: `Meta Instagram publish failed: ${publishResult.error || "No media ID returned"}` },
+          { status: 502 }
+        );
+      }
+
+      // Clean up ephemeral asset immediately after confirmed successful publish
+      if (data.temporaryAssetKey) {
+        await storageService.deleteTemporaryAsset(data.temporaryAssetKey);
+      }
+
+      // Persist to database only after verified Meta publication
       const post = await dbService.createPost({
         promptId: data.promptId,
+        instagramAccountId: connectedAccount.id,
         caption: data.caption,
         hashtags: data.hashtags,
         commentKeyword: keyword,
         mediaType: data.mediaType,
         temporaryImageUrl: data.temporaryImageUrl,
-        temporaryAssetKey: data.temporaryAssetKey,
-        instagramMediaId: publishedMediaId,
-        instagramPermalink: publishedPermalink,
+        temporaryAssetKey: null,
+        instagramMediaId: publishResult.mediaId,
+        instagramPermalink: publishResult.permalink || null,
         status: "PUBLISHED",
         publishedAt: new Date().toISOString(),
         scheduledFor: null,
@@ -112,11 +129,25 @@ export async function POST(request: NextRequest) {
     // 2. If "SCHEDULED" is requested
     if (data.status === "SCHEDULED") {
       if (!data.scheduledFor) {
-        return NextResponse.json({ error: "Scheduled date is required for scheduled posts" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Scheduled date and time are required for scheduled posts." },
+          { status: 400 }
+        );
       }
+
+      const scheduledTime = new Date(data.scheduledFor);
+      if (isNaN(scheduledTime.getTime()) || scheduledTime <= new Date()) {
+        return NextResponse.json(
+          { error: "Scheduled time must be a valid future date and time." },
+          { status: 400 }
+        );
+      }
+
+      const connectedAccount = await dbService.getConnectedInstagramAccount();
 
       const post = await dbService.createPost({
         promptId: data.promptId,
+        instagramAccountId: connectedAccount?.id || null,
         caption: data.caption,
         hashtags: data.hashtags,
         commentKeyword: keyword,
@@ -129,14 +160,16 @@ export async function POST(request: NextRequest) {
       });
 
       // Schedule background job in database queue
-      await queueService.scheduleJob("PUBLISH_POST", { postId: post.id }, new Date(data.scheduledFor));
+      await queueService.scheduleJob("PUBLISH_POST", { postId: post.id }, scheduledTime);
 
       return NextResponse.json({ success: true, data: post }, { status: 201 });
     }
 
     // 3. Otherwise "DRAFT"
+    const connectedAccount = await dbService.getConnectedInstagramAccount();
     const post = await dbService.createPost({
       promptId: data.promptId,
+      instagramAccountId: connectedAccount?.id || null,
       caption: data.caption,
       hashtags: data.hashtags,
       commentKeyword: keyword,

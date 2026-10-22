@@ -1,7 +1,6 @@
 import { prisma, checkDatabaseConnection } from "./prisma";
 import { instagramService } from "./instagram";
 import { storageService } from "./storage";
-import { dbService } from "./db-service";
 import type { JobType, JobStatus } from "@/types";
 
 export interface ScheduledJobData {
@@ -15,9 +14,6 @@ export interface ScheduledJobData {
   lastError?: string | null;
 }
 
-// In-memory job queue fallback
-const memoryJobs: ScheduledJobData[] = [];
-
 export const queueService = {
   /**
    * Schedule a new background job
@@ -28,43 +24,30 @@ export const queueService = {
     runAt: Date,
     maxAttempts: number = 5
   ): Promise<ScheduledJobData> => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const job = await prisma.scheduledJob.create({
-          data: {
-            jobType,
-            payload: JSON.stringify(payload),
-            runAt,
-            maxAttempts,
-            status: "PENDING",
-          },
-        });
-        return {
-          id: job.id,
-          jobType: job.jobType as JobType,
-          payload: JSON.parse(job.payload),
-          status: job.status as JobStatus,
-          runAt: job.runAt,
-          attempts: job.attempts,
-          maxAttempts: job.maxAttempts,
-        };
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new Error(`Database connection unavailable: ${dbCheck.message}. Job could not be scheduled.`);
     }
 
-    const jobData: ScheduledJobData = {
-      id: `job-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-      jobType,
-      payload,
-      status: "PENDING",
-      runAt,
-      attempts: 0,
-      maxAttempts,
+    const job = await prisma.scheduledJob.create({
+      data: {
+        jobType,
+        payload: JSON.stringify(payload),
+        runAt,
+        maxAttempts,
+        status: "PENDING",
+      },
+    });
+
+    return {
+      id: job.id,
+      jobType: job.jobType as JobType,
+      payload: JSON.parse(job.payload),
+      status: job.status as JobStatus,
+      runAt: job.runAt,
+      attempts: job.attempts,
+      maxAttempts: job.maxAttempts,
     };
-    memoryJobs.push(jobData);
-    return jobData;
   },
 
   /**
@@ -81,179 +64,186 @@ export const queueService = {
     let succeeded = 0;
     let failed = 0;
 
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      return {
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        details: [{ id: "none", jobType: "NONE", status: "FAILED", message: "Database is not connected" }],
+      };
+    }
+
     // 1. Recover stale locked jobs (locked for more than 10 minutes)
     const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
 
     try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        await prisma.scheduledJob.updateMany({
+      await prisma.scheduledJob.updateMany({
+        where: {
+          status: "PROCESSING",
+          lockedAt: { lt: tenMinutesAgo },
+        },
+        data: {
+          status: "PENDING",
+          lockedAt: null,
+          lockedBy: null,
+        },
+      });
+
+      // Claim due jobs atomically
+      const dueJobs = await prisma.scheduledJob.findMany({
+        where: {
+          status: "PENDING",
+          runAt: { lte: now },
+          attempts: { lt: 5 },
+        },
+        take: 10,
+        orderBy: { runAt: "asc" },
+      });
+
+      for (const job of dueJobs) {
+        // Optimistic locking / atomic claim
+        const claimed = await prisma.scheduledJob.updateMany({
           where: {
-            status: "PROCESSING",
-            lockedAt: { lt: tenMinutesAgo },
+            id: job.id,
+            status: "PENDING",
           },
           data: {
-            status: "PENDING",
-            lockedAt: null,
-            lockedBy: null,
+            status: "PROCESSING",
+            lockedAt: now,
+            lockedBy: workerId,
+            attempts: { increment: 1 },
           },
         });
 
-        // Claim due jobs atomically
-        const dueJobs = await prisma.scheduledJob.findMany({
-          where: {
-            status: "PENDING",
-            runAt: { lte: now },
-            attempts: { lt: 5 },
-          },
-          take: 10,
-          orderBy: { runAt: "asc" },
-        });
+        if (claimed.count === 0) continue; // Claimed by another concurrent worker
 
-        for (const job of dueJobs) {
-          // Optimistic locking / atomic claim
-          const claimed = await prisma.scheduledJob.updateMany({
-            where: {
-              id: job.id,
-              status: "PENDING",
-            },
-            data: {
-              status: "PROCESSING",
-              lockedAt: now,
-              lockedBy: workerId,
-              attempts: { increment: 1 },
-            },
-          });
+        const payload = JSON.parse(job.payload);
+        let success = false;
+        let jobError: string | null = null;
 
-          if (claimed.count === 0) continue; // Claimed by another concurrent worker
+        try {
+          if (job.jobType === "PUBLISH_POST") {
+            const postId = payload.postId as string;
+            const post = await prisma.post.findUnique({ where: { id: postId } });
 
-          const payload = JSON.parse(job.payload);
-          let success = false;
-          let jobError: string | null = null;
+            if (!post) {
+              throw new Error(`Scheduled post ${postId} was not found in database.`);
+            }
 
-          try {
-            if (job.jobType === "PUBLISH_POST") {
-              const postId = payload.postId as string;
-              const post = await prisma.post.findUnique({ where: { id: postId } });
+            if (post.status !== "SCHEDULED") {
+              // Post was cancelled or already published
+              success = true;
+              jobError = `Post ${postId} is no longer in SCHEDULED state (current: ${post.status})`;
+            } else {
+              if (!post.temporaryImageUrl) {
+                throw new Error(`Post ${postId} does not have an image URL to publish.`);
+              }
 
-              if (post && post.status === "SCHEDULED") {
+              // Resolve connected Instagram account
+              const account = await prisma.instagramAccount.findFirst({
+                where: { isConnected: true },
+                orderBy: { updatedAt: "desc" },
+              });
+
+              if (!account || !account.accessTokenEncrypted) {
+                throw new Error("No connected Instagram Professional account found to publish scheduled post.");
+              }
+
+              await prisma.post.update({
+                where: { id: postId },
+                data: { status: "PUBLISHING" },
+              });
+
+              // Execute genuine Meta publish
+              const fullCaption = `${post.caption}\n\n${post.hashtags}`.trim();
+              const result = await instagramService.publishImagePost(
+                account.accessTokenEncrypted,
+                account.igUserId,
+                post.temporaryImageUrl,
+                fullCaption
+              );
+
+              if (result.success && result.mediaId) {
                 await prisma.post.update({
                   where: { id: postId },
-                  data: { status: "PUBLISHING" },
+                  data: {
+                    status: "PUBLISHED",
+                    publishedAt: new Date(),
+                    instagramMediaId: result.mediaId,
+                    instagramPermalink: result.permalink || null,
+                    errorMessage: null,
+                  },
                 });
 
-                // Execute publish
-                const result = await instagramService.publishImagePost(
-                  "mock_or_encrypted_token",
-                  "18029384756201948",
-                  post.temporaryImageUrl || "",
-                  `${post.caption}\n\n${post.hashtags}`
-                );
-
-                if (result.success) {
-                  await prisma.post.update({
-                    where: { id: postId },
-                    data: {
-                      status: "PUBLISHED",
-                      publishedAt: new Date(),
-                      instagramMediaId: result.mediaId,
-                      instagramPermalink: result.permalink,
-                    },
-                  });
-
-                  // Immediate cleanup of temporary image asset
-                  if (post.temporaryAssetKey) {
-                    await storageService.deleteTemporaryAsset(post.temporaryAssetKey);
-                  }
-                  success = true;
-                } else {
-                  jobError = result.error || "Publishing failed";
+                // Immediate cleanup of temporary image asset
+                if (post.temporaryAssetKey) {
+                  await storageService.deleteTemporaryAsset(post.temporaryAssetKey);
                 }
+                success = true;
+              } else {
+                jobError = result.error || "Meta publication returned no media ID";
+                await prisma.post.update({
+                  where: { id: postId },
+                  data: {
+                    status: "FAILED",
+                    errorMessage: jobError,
+                  },
+                });
               }
-            } else if (job.jobType === "CLEANUP_TEMP_ASSETS") {
-              const count = await storageService.cleanupExpiredAssets();
-              success = true;
-              jobError = `Cleaned ${count} expired temporary assets`;
             }
+          } else if (job.jobType === "CLEANUP_TEMP_ASSETS") {
+            const count = await storageService.cleanupExpiredAssets();
+            success = true;
+            jobError = `Cleaned ${count} expired temporary assets`;
+          }
 
-            if (success) {
-              await prisma.scheduledJob.update({
-                where: { id: job.id },
-                data: {
-                  status: "COMPLETED",
-                  lockedAt: null,
-                },
-              });
-              succeeded++;
-              details.push({ id: job.id, jobType: job.jobType, status: "COMPLETED" });
-            } else {
-              throw new Error(jobError || "Job execution failed");
-            }
-          } catch (err: unknown) {
-            failed++;
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            const nextAttempts = job.attempts + 1;
-            const isPermanentFail = nextAttempts >= job.maxAttempts;
-
-            // Exponential backoff: 2^attempts * 1 minute
-            const backoffSeconds = Math.min(Math.pow(2, nextAttempts) * 60, 3600);
-            const nextRunAt = new Date(Date.now() + backoffSeconds * 1000);
-
+          if (success) {
             await prisma.scheduledJob.update({
               where: { id: job.id },
               data: {
-                status: isPermanentFail ? "FAILED" : "PENDING",
-                runAt: nextRunAt,
+                status: "COMPLETED",
                 lockedAt: null,
-                lastError: errorMsg,
               },
             });
-
-            details.push({
-              id: job.id,
-              jobType: job.jobType,
-              status: isPermanentFail ? "FAILED" : "RETRY_SCHEDULED",
-              message: errorMsg,
-            });
+            succeeded++;
+            details.push({ id: job.id, jobType: job.jobType, status: "COMPLETED" });
+          } else {
+            throw new Error(jobError || "Job execution failed");
           }
-        }
+        } catch (err: unknown) {
+          failed++;
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const nextAttempts = job.attempts + 1;
+          const isPermanentFail = nextAttempts >= job.maxAttempts;
 
-        return { processed: dueJobs.length, succeeded, failed, details };
-      }
-    } catch {
-      // In-memory queue fallback execution
-    }
+          // Exponential backoff: 2^attempts * 1 minute
+          const backoffSeconds = Math.min(Math.pow(2, nextAttempts) * 60, 3600);
+          const nextRunAt = new Date(Date.now() + backoffSeconds * 1000);
 
-    // In-memory queue processor
-    for (let i = 0; i < memoryJobs.length; i++) {
-      const job = memoryJobs[i];
-      if (job.status === "PENDING" && job.runAt <= now) {
-        job.status = "PROCESSING";
-        job.attempts += 1;
-
-        if (job.jobType === "PUBLISH_POST") {
-          const postId = job.payload.postId as string;
-          const post = await dbService.updatePost(postId, {
-            status: "PUBLISHED",
-            publishedAt: new Date().toISOString(),
-            instagramMediaId: `pub_${Date.now()}`,
-            instagramPermalink: `https://www.instagram.com/p/mock_${Date.now()}/`,
+          await prisma.scheduledJob.update({
+            where: { id: job.id },
+            data: {
+              status: isPermanentFail ? "FAILED" : "PENDING",
+              runAt: nextRunAt,
+              lockedAt: null,
+              lastError: errorMsg,
+            },
           });
-          if (post?.temporaryAssetKey) {
-            await storageService.deleteTemporaryAsset(post.temporaryAssetKey);
-          }
-          job.status = "COMPLETED";
-          succeeded++;
-          details.push({ id: job.id, jobType: job.jobType, status: "COMPLETED" });
-        } else if (job.jobType === "CLEANUP_TEMP_ASSETS") {
-          const count = await storageService.cleanupExpiredAssets();
-          job.status = "COMPLETED";
-          succeeded++;
-          details.push({ id: job.id, jobType: job.jobType, status: "COMPLETED", message: `Cleaned ${count} assets` });
+
+          details.push({
+            id: job.id,
+            jobType: job.jobType,
+            status: isPermanentFail ? "FAILED" : "RETRY_SCHEDULED",
+            message: errorMsg,
+          });
         }
       }
-    }
 
-    return { processed: succeeded + failed, succeeded, failed, details };
+      return { processed: dueJobs.length, succeeded, failed, details };
+    } catch (err: unknown) {
+      console.error("Critical error in processDueJobs:", err);
+      return { processed: 0, succeeded: 0, failed: 1, details: [{ id: "critical", jobType: "UNKNOWN", status: "FAILED", message: String(err) }] };
+    }
   },
 };

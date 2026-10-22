@@ -41,7 +41,7 @@ export const webhookProcessor = {
     // Verify automation setting is globally enabled
     const settings = await dbService.getAutomationSettings();
     if (!settings.isAutomationEnabled) {
-      return [{ commentId: "all", action: "IGNORED", message: "Automation globally disabled" }];
+      return [{ commentId: "all", action: "IGNORED", message: "Automation is globally disabled in Settings" }];
     }
 
     const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -64,7 +64,7 @@ export const webhookProcessor = {
           results.push({
             commentId,
             action: "DUPLICATE",
-            message: `Comment ${commentId} already processed (status: ${alreadyProcessed.deliveryStatus})`,
+            message: `Comment ${commentId} already processed with status: ${alreadyProcessed.deliveryStatus}`,
           });
           continue;
         }
@@ -74,9 +74,28 @@ export const webhookProcessor = {
           const commentDate = new Date(comment.created_time * 1000);
           const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000);
           if (commentDate < sevenDaysAgo) {
+            try {
+              await dbService.createPromptRequest({
+                incomingCommentId: commentId,
+                instagramMediaId: mediaId || "unknown",
+                commenterId,
+                commentText,
+                matchedPostId: null,
+                matchedPromptId: null,
+                deliveryStatus: "FAILED",
+                deliveryMethod: "PRIVATE_REPLY",
+                privateReplyId: null,
+                retryCount: 0,
+                errorMessage: "Comment is older than 7 days; outside Meta Private Reply window",
+                deliveredAt: null,
+              });
+            } catch (dbErr) {
+              console.error("DB persist error in webhook:", dbErr);
+            }
+
             results.push({
               commentId,
-              action: "IGNORED",
+              action: "FAILED",
               message: "Comment is older than 7 days; outside Meta Private Reply window",
             });
             continue;
@@ -95,18 +114,24 @@ export const webhookProcessor = {
 
         if (!isMatched) {
           // Record as IGNORED request for visibility in automation logs
-          await dbService.createPromptRequest({
-            incomingCommentId: commentId,
-            instagramMediaId: mediaId || "unknown",
-            commenterId,
-            commentText,
-            matchedPostId: matchedPost?.id || null,
-            matchedPromptId: matchedPost?.promptId || null,
-            deliveryStatus: "IGNORED",
-            deliveryMethod: "NONE",
-            retryCount: 0,
-            errorMessage: `Comment did not contain keyword: ${targetKeyword}`,
-          });
+          try {
+            await dbService.createPromptRequest({
+              incomingCommentId: commentId,
+              instagramMediaId: mediaId || "unknown",
+              commenterId,
+              commentText,
+              matchedPostId: matchedPost?.id || null,
+              matchedPromptId: matchedPost?.promptId || null,
+              deliveryStatus: "IGNORED",
+              deliveryMethod: "NONE",
+              privateReplyId: null,
+              retryCount: 0,
+              errorMessage: `Comment did not contain keyword: ${targetKeyword}`,
+              deliveredAt: null,
+            });
+          } catch (dbErr) {
+            console.error("DB persist error in webhook:", dbErr);
+          }
 
           results.push({
             commentId,
@@ -122,6 +147,25 @@ export const webhookProcessor = {
           : null;
 
         if (!matchedPrompt) {
+          try {
+            await dbService.createPromptRequest({
+              incomingCommentId: commentId,
+              instagramMediaId: mediaId || "unknown",
+              commenterId,
+              commentText,
+              matchedPostId: matchedPost?.id || null,
+              matchedPromptId: null,
+              deliveryStatus: "FAILED",
+              deliveryMethod: "PRIVATE_REPLY",
+              privateReplyId: null,
+              retryCount: 0,
+              errorMessage: "No prompt associated with this Instagram post",
+              deliveredAt: null,
+            });
+          } catch (dbErr) {
+            console.error("DB persist error in webhook:", dbErr);
+          }
+
           results.push({
             commentId,
             action: "FAILED",
@@ -139,35 +183,72 @@ export const webhookProcessor = {
           : `Here is the photography prompt you requested: ${promptUrl}`;
 
         // 6. Send private reply via official Meta API
-        // If live instagram account exists, execute sendPrivateReply
-        let sendResult = { success: true, messageId: `mock_reply_${Date.now()}`, error: undefined as string | undefined };
+        const connectedAccount = await dbService.getConnectedInstagramAccount();
 
-        if (instagramService.isConfigured() && matchedPost?.instagramAccountId) {
-          // In live mode with credentials, call instagramService.sendPrivateReply
-          // sendResult = await instagramService.sendPrivateReply(...)
+        if (!connectedAccount || !connectedAccount.accessTokenEncrypted) {
+          // Cannot deliver without a connected Instagram account
+          try {
+            await dbService.createPromptRequest({
+              incomingCommentId: commentId,
+              instagramMediaId: mediaId || "unknown",
+              commenterId,
+              commentText,
+              matchedPostId: matchedPost?.id || null,
+              matchedPromptId: matchedPrompt.id,
+              deliveryStatus: "FAILED",
+              deliveryMethod: "PRIVATE_REPLY",
+              privateReplyId: null,
+              retryCount: 0,
+              errorMessage: "No connected Instagram Professional account found to dispatch private reply",
+              deliveredAt: null,
+            });
+          } catch (dbErr) {
+            console.error("DB persist error in webhook:", dbErr);
+          }
+
+          results.push({
+            commentId,
+            action: "FAILED",
+            message: "No connected Instagram account found to send private reply",
+          });
+          continue;
         }
 
-        // 7. Persist PromptRequest record
-        await dbService.createPromptRequest({
-          incomingCommentId: commentId,
-          instagramMediaId: mediaId,
-          commenterId,
-          commentText,
-          matchedPostId: matchedPost?.id || null,
-          matchedPromptId: matchedPrompt.id,
-          deliveryStatus: sendResult.success ? "DELIVERED" : "FAILED",
-          deliveryMethod: "PRIVATE_REPLY",
-          privateReplyId: sendResult.messageId || null,
-          retryCount: 0,
-          errorMessage: sendResult.error || null,
-          deliveredAt: sendResult.success ? new Date().toISOString() : null,
-        });
+        // Real API invocation
+        const sendResult = await instagramService.sendPrivateReply(
+          connectedAccount.accessTokenEncrypted,
+          connectedAccount.igUserId,
+          commentId,
+          replyText
+        );
+
+        const isDelivered = sendResult.success && Boolean(sendResult.messageId);
+
+        // 7. Persist verified PromptRequest record
+        try {
+          await dbService.createPromptRequest({
+            incomingCommentId: commentId,
+            instagramMediaId: mediaId || "unknown",
+            commenterId,
+            commentText,
+            matchedPostId: matchedPost?.id || null,
+            matchedPromptId: matchedPrompt.id,
+            deliveryStatus: isDelivered ? "DELIVERED" : "FAILED",
+            deliveryMethod: "PRIVATE_REPLY",
+            privateReplyId: isDelivered ? sendResult.messageId || null : null,
+            retryCount: 0,
+            errorMessage: isDelivered ? null : sendResult.error || "Meta private reply failed",
+            deliveredAt: isDelivered ? new Date().toISOString() : null,
+          });
+        } catch (dbErr) {
+          console.error("DB persist error in webhook:", dbErr);
+        }
 
         results.push({
           commentId,
-          action: sendResult.success ? "DELIVERED" : "FAILED",
+          action: isDelivered ? "DELIVERED" : "FAILED",
           slug: matchedPrompt.slug,
-          message: sendResult.success
+          message: isDelivered
             ? `Prompt delivered via private reply: ${promptUrl}`
             : `Failed to deliver private reply: ${sendResult.error}`,
         });
@@ -177,3 +258,6 @@ export const webhookProcessor = {
     return results;
   },
 };
+
+export const webhookHandler = webhookProcessor;
+

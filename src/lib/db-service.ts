@@ -8,7 +8,14 @@ import type {
   InstagramAccountItem,
 } from "@/types";
 
-// Initial seed prompts for fallback/offline/local development
+export class DatabaseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DatabaseError";
+  }
+}
+
+// Seeded catalog template prompts (read-only reference prompts)
 const INITIAL_PROMPTS: PromptItem[] = [
   {
     id: "p-1",
@@ -26,10 +33,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "golden-hour-tuscan-vineyard-bridal-portrait",
     isArchived: false,
-    viewCount: 342,
-    copyCount: 94,
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-2",
@@ -47,10 +54,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "moody-rainy-streets-paris-pre-wedding",
     isArchived: false,
-    viewCount: 289,
-    copyCount: 78,
-    createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-3",
@@ -68,10 +75,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "avant-garde-architectural-haute-couture-editorial",
     isArchived: false,
-    viewCount: 412,
-    copyCount: 115,
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-4",
@@ -89,10 +96,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "fine-art-botanical-studio-maternity",
     isArchived: false,
-    viewCount: 198,
-    copyCount: 42,
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-5",
@@ -110,10 +117,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "organic-wool-knit-sleeping-newborn",
     isArchived: false,
-    viewCount: 156,
-    copyCount: 38,
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-6",
@@ -131,10 +138,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "autumn-coastal-cliffside-family-lifestyle",
     isArchived: false,
-    viewCount: 220,
-    copyCount: 51,
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-7",
@@ -152,10 +159,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "neon-cyberpunk-noir-cinematic-portrait",
     isArchived: false,
-    viewCount: 480,
-    copyCount: 162,
-    createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-8",
@@ -173,10 +180,10 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "luxury-horology-floating-in-water-droplets",
     isArchived: false,
-    viewCount: 310,
-    copyCount: 88,
-    createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+    viewCount: 0,
+    copyCount: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
     id: "p-9",
@@ -194,8 +201,8 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "chiaroscuro-prismatic-glass-creative-lighting",
     isArchived: false,
-    viewCount: 265,
-    copyCount: 72,
+    viewCount: 0,
+    copyCount: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -215,165 +222,138 @@ const INITIAL_PROMPTS: PromptItem[] = [
     },
     slug: "monochrome-sculptural-ballet-studio-portrait",
     isArchived: false,
-    viewCount: 184,
-    copyCount: 45,
+    viewCount: 0,
+    copyCount: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
 ];
 
-// In-memory fallback state
-const memoryState = {
-  prompts: [...INITIAL_PROMPTS],
-  posts: [
-    {
-      id: "post-1",
-      promptId: "p-1",
-      caption:
-        "Sunlight filtering through centuries-old Tuscan vines. When golden hour delivers poetry like this, magic happens.\n\nComment BRIDAL to receive the exact lens, lighting setup, and camera prompt directly in your DMs.",
-      hashtags: "#weddingphotography #bridalportrait #goldenhourphotographer #tuscanwedding #portraitlighting",
-      commentKeyword: "BRIDAL",
-      mediaType: "IMAGE",
-      temporaryImageUrl: "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80",
-      instagramMediaId: "18029384756201948",
-      instagramPermalink: "https://www.instagram.com/p/C3x9L0mK1az/",
-      status: "PUBLISHED" as const,
-      scheduledFor: null,
-      publishedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-      errorMessage: null,
-      retryCount: 0,
-      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-      updatedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    },
-    {
-      id: "post-2",
-      promptId: "p-3",
-      caption:
-        "Structural geometry meets Haute Couture. Exploring the contrast between raw Brutalist architecture and liquid champagne organza.\n\nComment EDITORIAL to get the full prompt and Hasselblad settings.",
-      hashtags: "#fashioneditorial #hautecouture #brutalistarchitecture #vogueeditorial #editorialphotography",
-      commentKeyword: "EDITORIAL",
-      mediaType: "IMAGE",
-      temporaryImageUrl: "https://images.unsplash.com/photo-1509631179647-0177331693ae?auto=format&fit=crop&w=1200&q=80",
-      instagramMediaId: null,
-      instagramPermalink: null,
-      status: "SCHEDULED" as const,
-      scheduledFor: new Date(Date.now() + 86400000 * 1).toISOString(),
-      publishedAt: null,
-      errorMessage: null,
-      retryCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ] as PostItem[],
-  promptRequests: [
-    {
-      id: "req-1",
-      incomingCommentId: "ig_comment_991827364",
-      instagramMediaId: "18029384756201948",
-      commenterId: "ig_user_449201928",
-      commentText: "BRIDAL please! Loving the rim backlight tones",
-      matchedPostId: "post-1",
-      matchedPromptId: "p-1",
-      deliveryStatus: "DELIVERED" as const,
-      deliveryMethod: "PRIVATE_REPLY",
-      privateReplyId: "msg_ig_8829102",
-      retryCount: 0,
-      errorMessage: null,
-      deliveredAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-      createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    },
-    {
-      id: "req-2",
-      incomingCommentId: "ig_comment_991827365",
-      instagramMediaId: "18029384756201948",
-      commenterId: "ig_user_771928391",
-      commentText: "bridal send me the prompt",
-      matchedPostId: "post-1",
-      matchedPromptId: "p-1",
-      deliveryStatus: "DELIVERED" as const,
-      deliveryMethod: "PRIVATE_REPLY",
-      privateReplyId: "msg_ig_8829103",
-      retryCount: 0,
-      errorMessage: null,
-      deliveredAt: new Date(Date.now() - 3600000 * 14).toISOString(),
-      createdAt: new Date(Date.now() - 3600000 * 14).toISOString(),
-    },
-    {
-      id: "req-3",
-      incomingCommentId: "ig_comment_991827366",
-      instagramMediaId: "18029384756201948",
-      commenterId: "ig_user_332190123",
-      commentText: "Bridal!!",
-      matchedPostId: "post-1",
-      matchedPromptId: "p-1",
-      deliveryStatus: "DELIVERED" as const,
-      deliveryMethod: "PRIVATE_REPLY",
-      privateReplyId: "msg_ig_8829104",
-      retryCount: 0,
-      errorMessage: null,
-      deliveredAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-      createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-    },
-    {
-      id: "req-4",
-      incomingCommentId: "ig_comment_991827367",
-      instagramMediaId: "18029384756201948",
-      commenterId: "ig_user_551029384",
-      commentText: "Such a breathtaking shot!",
-      matchedPostId: "post-1",
-      matchedPromptId: "p-1",
-      deliveryStatus: "IGNORED" as const,
-      deliveryMethod: "NONE",
-      privateReplyId: null,
-      retryCount: 0,
-      errorMessage: "No matching keyword found in comment",
-      deliveredAt: null,
-      createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    },
-  ] as PromptRequestItem[],
-  automationSettings: {
-    id: "default-automation-setting",
-    isAutomationEnabled: true,
-    globalKeyword: "PROMPT",
-    replyTemplate: "Here is the photography prompt you requested: {prompt_url}",
-    maxRepliesPerCommenter: 1,
-    retentionHours: 24,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  } as AutomationSettingItem,
-  activityLogs: [
-    {
-      id: "log-1",
-      action: "POST_PUBLISHED",
-      entityType: "Post",
-      entityId: "post-1",
-      details: { caption: "Sunlight filtering through centuries-old Tuscan vines..." },
-      createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    },
-    {
-      id: "log-2",
-      action: "PRIVATE_REPLY_SENT",
-      entityType: "PromptRequest",
-      entityId: "req-1",
-      details: { keyword: "BRIDAL", promptSlug: "golden-hour-tuscan-vineyard-bridal-portrait" },
-      createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    },
-    {
-      id: "log-3",
-      action: "POST_SCHEDULED",
-      entityType: "Post",
-      entityId: "post-2",
-      details: { scheduledFor: new Date(Date.now() + 86400000).toISOString() },
-      createdAt: new Date().toISOString(),
-    },
-  ] as ActivityLogItem[],
-  instagramAccount: null as InstagramAccountItem | null,
-};
-
 export const dbService = {
   // Check database health
   checkHealth: async () => {
     return checkDatabaseConnection();
+  },
+
+  // INSTAGRAM ACCOUNT OPERATIONS
+  getConnectedInstagramAccount: async (): Promise<InstagramAccountItem | null> => {
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      return null;
+    }
+
+    try {
+      const account = await prisma.instagramAccount.findFirst({
+        where: { isConnected: true },
+        orderBy: { updatedAt: "desc" },
+      });
+
+      if (!account) return null;
+
+      return {
+        id: account.id,
+        igUserId: account.igUserId,
+        username: account.username,
+        name: account.name,
+        profilePictureUrl: account.profilePictureUrl,
+        accessTokenEncrypted: account.accessTokenEncrypted,
+        tokenExpiresAt: account.tokenExpiresAt ? account.tokenExpiresAt.toISOString() : null,
+        isConnected: account.isConnected,
+        permissions: account.permissions,
+        createdAt: account.createdAt.toISOString(),
+        updatedAt: account.updatedAt.toISOString(),
+      };
+    } catch (err: unknown) {
+      console.error("Database query failed in getConnectedInstagramAccount:", err);
+      return null;
+    }
+  },
+
+  saveInstagramAccount: async (data: {
+    igUserId: string;
+    username: string;
+    name?: string | null;
+    profilePictureUrl?: string | null;
+    accessTokenEncrypted: string;
+    tokenExpiresAt?: Date | null;
+    permissions?: string;
+    userId?: string;
+  }): Promise<InstagramAccountItem> => {
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection failed: ${dbCheck.message}. Cannot save Instagram account.`);
+    }
+
+    let targetUserId = data.userId;
+    if (!targetUserId) {
+      const admin = await prisma.user.findFirst();
+      if (admin) {
+        targetUserId = admin.id;
+      } else {
+        const createdAdmin = await prisma.user.create({
+          data: {
+            email: process.env.ADMIN_EMAIL || "admin@photographerprompthub.com",
+            name: "Photography Director",
+            passwordHash: "pending",
+            role: "ADMIN",
+          },
+        });
+        targetUserId = createdAdmin.id;
+      }
+    }
+
+    const account = await prisma.instagramAccount.upsert({
+      where: { igUserId: data.igUserId },
+      update: {
+        username: data.username,
+        name: data.name,
+        profilePictureUrl: data.profilePictureUrl,
+        accessTokenEncrypted: data.accessTokenEncrypted,
+        tokenExpiresAt: data.tokenExpiresAt,
+        isConnected: true,
+        permissions: data.permissions,
+      },
+      create: {
+        userId: targetUserId,
+        igUserId: data.igUserId,
+        username: data.username,
+        name: data.name,
+        profilePictureUrl: data.profilePictureUrl,
+        accessTokenEncrypted: data.accessTokenEncrypted,
+        tokenExpiresAt: data.tokenExpiresAt,
+        isConnected: true,
+        permissions: data.permissions,
+      },
+    });
+
+    return {
+      id: account.id,
+      igUserId: account.igUserId,
+      username: account.username,
+      name: account.name,
+      profilePictureUrl: account.profilePictureUrl,
+      accessTokenEncrypted: account.accessTokenEncrypted,
+      tokenExpiresAt: account.tokenExpiresAt ? account.tokenExpiresAt.toISOString() : null,
+      isConnected: account.isConnected,
+      permissions: account.permissions,
+      createdAt: account.createdAt.toISOString(),
+      updatedAt: account.updatedAt.toISOString(),
+    };
+  },
+
+  disconnectInstagramAccount: async (igUserId?: string): Promise<{ success: boolean; count: number }> => {
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection failed: ${dbCheck.message}. Cannot disconnect account.`);
+    }
+
+    const whereClause = igUserId ? { igUserId } : { isConnected: true };
+    const updated = await prisma.instagramAccount.updateMany({
+      where: whereClause,
+      data: { isConnected: false },
+    });
+
+    return { success: true, count: updated.count };
   },
 
   // PROMPTS
@@ -401,20 +381,22 @@ export const dbService = {
           orderBy: { createdAt: "desc" },
         });
 
-        return items.map((p) => ({
-          ...p,
-          tags: p.tags ? p.tags.split(",").map((t) => t.trim()) : [],
-          generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
-          createdAt: p.createdAt.toISOString(),
-          updatedAt: p.updatedAt.toISOString(),
-        }));
+        if (items.length > 0) {
+          return items.map((p) => ({
+            ...p,
+            tags: p.tags ? p.tags.split(",").map((t) => t.trim()) : [],
+            generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
+            createdAt: p.createdAt.toISOString(),
+            updatedAt: p.updatedAt.toISOString(),
+          }));
+        }
       }
-    } catch {
-      // Fallback
+    } catch (err: unknown) {
+      console.warn("Database prompt lookup error, displaying reference catalog:", err);
     }
 
-    // In-memory fallback
-    let list = memoryState.prompts;
+    // Reference catalog templates
+    let list = [...INITIAL_PROMPTS];
     if (!options?.includeArchived) {
       list = list.filter((p) => !p.isArchived);
     }
@@ -448,11 +430,11 @@ export const dbService = {
           };
         }
       }
-    } catch {
-      // Fallback
+    } catch (err: unknown) {
+      console.error("Database prompt lookup error:", err);
     }
 
-    return memoryState.prompts.find((p) => p.id === id) || null;
+    return INITIAL_PROMPTS.find((p) => p.id === id) || null;
   },
 
   getPromptBySlug: async (slug: string) => {
@@ -480,22 +462,16 @@ export const dbService = {
           };
         }
       }
-    } catch {
-      // Fallback
+    } catch (err: unknown) {
+      console.error("Database slug lookup error:", err);
     }
 
-    const item = memoryState.prompts.find((p) => p.slug === slug);
+    const item = INITIAL_PROMPTS.find((p) => p.slug === slug);
     if (!item) return null;
-
-    const matchedPost = memoryState.posts.find(
-      (post) => post.promptId === item.id && post.status === "PUBLISHED"
-    );
 
     return {
       ...item,
-      latestPost: matchedPost
-        ? { instagramPermalink: matchedPost.instagramPermalink, publishedAt: matchedPost.publishedAt }
-        : null,
+      latestPost: null,
     };
   },
 
@@ -507,47 +483,29 @@ export const dbService = {
     generationSettings?: Record<string, unknown>;
     slug: string;
   }) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const p = await prisma.prompt.create({
-          data: {
-            title: data.title,
-            originalPrompt: data.originalPrompt,
-            category: data.category,
-            tags: data.tags.join(","),
-            generationSettings: data.generationSettings ? JSON.stringify(data.generationSettings) : null,
-            slug: data.slug,
-          },
-        });
-        return {
-          ...p,
-          tags: p.tags.split(",").map((t) => t.trim()),
-          generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
-          createdAt: p.createdAt.toISOString(),
-          updatedAt: p.updatedAt.toISOString(),
-        };
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Prompt write could not be confirmed.`);
     }
 
-    const newItem: PromptItem = {
-      id: `p-${Date.now()}`,
-      title: data.title,
-      originalPrompt: data.originalPrompt,
-      category: data.category,
-      tags: data.tags,
-      generationSettings: data.generationSettings,
-      slug: data.slug,
-      isArchived: false,
-      viewCount: 0,
-      copyCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    const p = await prisma.prompt.create({
+      data: {
+        title: data.title,
+        originalPrompt: data.originalPrompt,
+        category: data.category,
+        tags: data.tags.join(","),
+        generationSettings: data.generationSettings ? JSON.stringify(data.generationSettings) : null,
+        slug: data.slug,
+      },
+    });
+
+    return {
+      ...p,
+      tags: p.tags.split(",").map((t) => t.trim()),
+      generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
     };
-    memoryState.prompts.unshift(newItem);
-    return newItem;
   },
 
   updatePrompt: async (
@@ -562,309 +520,307 @@ export const dbService = {
       isArchived: boolean;
     }>
   ) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const p = await prisma.prompt.update({
-          where: { id },
-          data: {
-            ...(data.title && { title: data.title }),
-            ...(data.originalPrompt && { originalPrompt: data.originalPrompt }),
-            ...(data.category && { category: data.category }),
-            ...(data.tags && { tags: data.tags.join(",") }),
-            ...(data.generationSettings && { generationSettings: JSON.stringify(data.generationSettings) }),
-            ...(data.slug && { slug: data.slug }),
-            ...(data.isArchived !== undefined && { isArchived: data.isArchived }),
-          },
-        });
-        return {
-          ...p,
-          tags: p.tags.split(",").map((t) => t.trim()),
-          generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
-          createdAt: p.createdAt.toISOString(),
-          updatedAt: p.updatedAt.toISOString(),
-        };
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Prompt update could not be confirmed.`);
     }
 
-    const idx = memoryState.prompts.findIndex((p) => p.id === id);
-    if (idx !== -1) {
-      memoryState.prompts[idx] = {
-        ...memoryState.prompts[idx],
-        ...data,
-        updatedAt: new Date().toISOString(),
-      };
-      return memoryState.prompts[idx];
-    }
-    return null;
+    const p = await prisma.prompt.update({
+      where: { id },
+      data: {
+        ...(data.title && { title: data.title }),
+        ...(data.originalPrompt && { originalPrompt: data.originalPrompt }),
+        ...(data.category && { category: data.category }),
+        ...(data.tags && { tags: data.tags.join(",") }),
+        ...(data.generationSettings && { generationSettings: JSON.stringify(data.generationSettings) }),
+        ...(data.slug && { slug: data.slug }),
+        ...(data.isArchived !== undefined && { isArchived: data.isArchived }),
+      },
+    });
+
+    return {
+      ...p,
+      tags: p.tags.split(",").map((t) => t.trim()),
+      generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+    };
   },
 
   incrementPromptCopies: async (slug: string) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
+    const dbCheck = await checkDatabaseConnection();
+    if (dbCheck.ok) {
+      try {
         await prisma.prompt.update({
           where: { slug },
           data: { copyCount: { increment: 1 } },
         });
-        return;
+      } catch {
+        // Safe tracking failure
       }
-    } catch {
-      // Fallback
-    }
-
-    const item = memoryState.prompts.find((p) => p.slug === slug);
-    if (item) {
-      item.copyCount += 1;
     }
   },
 
   incrementPromptViews: async (slug: string) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
+    const dbCheck = await checkDatabaseConnection();
+    if (dbCheck.ok) {
+      try {
         await prisma.prompt.update({
           where: { slug },
           data: { viewCount: { increment: 1 } },
         });
-        return;
+      } catch {
+        // Safe tracking failure
       }
-    } catch {
-      // Fallback
-    }
-
-    const item = memoryState.prompts.find((p) => p.slug === slug);
-    if (item) {
-      item.viewCount += 1;
     }
   },
 
   // POSTS
   getPosts: async (options?: { status?: string }) => {
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      return [];
+    }
+
     try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const where: Record<string, unknown> = {};
-        if (options?.status && options.status !== "ALL") {
-          where.status = options.status;
-        }
-        const items = await prisma.post.findMany({
-          where,
-          include: { prompt: true },
-          orderBy: { createdAt: "desc" },
-        });
-
-        return items.map((post) => ({
-          ...post,
-          createdAt: post.createdAt.toISOString(),
-          updatedAt: post.updatedAt.toISOString(),
-          scheduledFor: post.scheduledFor ? post.scheduledFor.toISOString() : null,
-          publishedAt: post.publishedAt ? post.publishedAt.toISOString() : null,
-          prompt: post.prompt
-            ? {
-                ...post.prompt,
-                tags: post.prompt.tags.split(","),
-                generationSettings: post.prompt.generationSettings
-                  ? JSON.parse(post.prompt.generationSettings)
-                  : undefined,
-                createdAt: post.prompt.createdAt.toISOString(),
-                updatedAt: post.prompt.updatedAt.toISOString(),
-              }
-            : undefined,
-        }));
+      const where: Record<string, unknown> = {};
+      if (options?.status && options.status !== "ALL") {
+        where.status = options.status;
       }
-    } catch {
-      // Fallback
-    }
+      const items = await prisma.post.findMany({
+        where,
+        include: { prompt: true, instagramAccount: true },
+        orderBy: { createdAt: "desc" },
+      });
 
-    let list = memoryState.posts;
-    if (options?.status && options.status !== "ALL") {
-      list = list.filter((p) => p.status === options.status);
+      return items.map((post) => ({
+        ...post,
+        createdAt: post.createdAt.toISOString(),
+        updatedAt: post.updatedAt.toISOString(),
+        scheduledFor: post.scheduledFor ? post.scheduledFor.toISOString() : null,
+        publishedAt: post.publishedAt ? post.publishedAt.toISOString() : null,
+        prompt: post.prompt
+          ? {
+              ...post.prompt,
+              tags: post.prompt.tags.split(","),
+              generationSettings: post.prompt.generationSettings
+                ? JSON.parse(post.prompt.generationSettings)
+                : undefined,
+              createdAt: post.prompt.createdAt.toISOString(),
+              updatedAt: post.prompt.updatedAt.toISOString(),
+            }
+          : undefined,
+        instagramAccount: post.instagramAccount
+          ? {
+              id: post.instagramAccount.id,
+              igUserId: post.instagramAccount.igUserId,
+              username: post.instagramAccount.username,
+              name: post.instagramAccount.name,
+              profilePictureUrl: post.instagramAccount.profilePictureUrl,
+              isConnected: post.instagramAccount.isConnected,
+              permissions: post.instagramAccount.permissions,
+              createdAt: post.instagramAccount.createdAt.toISOString(),
+              updatedAt: post.instagramAccount.updatedAt.toISOString(),
+            }
+          : null,
+      }));
+    } catch (err: unknown) {
+      console.error("Database error in getPosts:", err);
+      return [];
     }
-    return list.map((post) => {
-      const prompt = memoryState.prompts.find((p) => p.id === post.promptId);
-      return { ...post, prompt };
-    });
   },
 
   createPost: async (data: Omit<PostItem, "id" | "createdAt" | "updatedAt" | "retryCount">) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const post = await prisma.post.create({
-          data: {
-            promptId: data.promptId,
-            caption: data.caption,
-            hashtags: data.hashtags,
-            commentKeyword: data.commentKeyword.toUpperCase(),
-            mediaType: data.mediaType || "IMAGE",
-            temporaryImageUrl: data.temporaryImageUrl,
-            temporaryAssetKey: data.temporaryAssetKey,
-            status: data.status,
-            scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : null,
-            publishedAt: data.publishedAt ? new Date(data.publishedAt) : null,
-          },
-        });
-        return {
-          ...post,
-          createdAt: post.createdAt.toISOString(),
-          updatedAt: post.updatedAt.toISOString(),
-          scheduledFor: post.scheduledFor?.toISOString() || null,
-          publishedAt: post.publishedAt?.toISOString() || null,
-        };
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Post write could not be confirmed.`);
     }
 
-    const newPost: PostItem = {
-      ...data,
-      id: `post-${Date.now()}`,
-      commentKeyword: data.commentKeyword.toUpperCase(),
-      retryCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+    const post = await prisma.post.create({
+      data: {
+        promptId: data.promptId,
+        instagramAccountId: data.instagramAccountId || null,
+        caption: data.caption,
+        hashtags: data.hashtags,
+        commentKeyword: data.commentKeyword.toUpperCase(),
+        mediaType: data.mediaType || "IMAGE",
+        temporaryImageUrl: data.temporaryImageUrl,
+        temporaryAssetKey: data.temporaryAssetKey,
+        instagramMediaId: data.instagramMediaId || null,
+        instagramPermalink: data.instagramPermalink || null,
+        status: data.status,
+        scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : null,
+        publishedAt: data.publishedAt ? new Date(data.publishedAt) : null,
+        errorMessage: data.errorMessage || null,
+      },
+    });
+
+    return {
+      ...post,
+      createdAt: post.createdAt.toISOString(),
+      updatedAt: post.updatedAt.toISOString(),
+      scheduledFor: post.scheduledFor?.toISOString() || null,
+      publishedAt: post.publishedAt?.toISOString() || null,
     };
-    memoryState.posts.unshift(newPost);
-    return newPost;
   },
 
   updatePost: async (id: string, data: Partial<PostItem>) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const post = await prisma.post.update({
-          where: { id },
-          data: {
-            ...(data.caption && { caption: data.caption }),
-            ...(data.hashtags && { hashtags: data.hashtags }),
-            ...(data.commentKeyword && { commentKeyword: data.commentKeyword.toUpperCase() }),
-            ...(data.status && { status: data.status }),
-            ...(data.instagramMediaId && { instagramMediaId: data.instagramMediaId }),
-            ...(data.instagramPermalink && { instagramPermalink: data.instagramPermalink }),
-            ...(data.scheduledFor !== undefined && {
-              scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : null,
-            }),
-            ...(data.publishedAt !== undefined && {
-              publishedAt: data.publishedAt ? new Date(data.publishedAt) : null,
-            }),
-            ...(data.errorMessage !== undefined && { errorMessage: data.errorMessage }),
-          },
-        });
-        return {
-          ...post,
-          createdAt: post.createdAt.toISOString(),
-          updatedAt: post.updatedAt.toISOString(),
-          scheduledFor: post.scheduledFor?.toISOString() || null,
-          publishedAt: post.publishedAt?.toISOString() || null,
-        };
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Post update could not be confirmed.`);
     }
 
-    const idx = memoryState.posts.findIndex((p) => p.id === id);
-    if (idx !== -1) {
-      memoryState.posts[idx] = {
-        ...memoryState.posts[idx],
-        ...data,
-        updatedAt: new Date().toISOString(),
-      };
-      return memoryState.posts[idx];
-    }
-    return null;
+    const post = await prisma.post.update({
+      where: { id },
+      data: {
+        ...(data.caption && { caption: data.caption }),
+        ...(data.hashtags && { hashtags: data.hashtags }),
+        ...(data.commentKeyword && { commentKeyword: data.commentKeyword.toUpperCase() }),
+        ...(data.status && { status: data.status }),
+        ...(data.instagramMediaId !== undefined && { instagramMediaId: data.instagramMediaId }),
+        ...(data.instagramPermalink !== undefined && { instagramPermalink: data.instagramPermalink }),
+        ...(data.scheduledFor !== undefined && {
+          scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : null,
+        }),
+        ...(data.publishedAt !== undefined && {
+          publishedAt: data.publishedAt ? new Date(data.publishedAt) : null,
+        }),
+        ...(data.errorMessage !== undefined && { errorMessage: data.errorMessage }),
+      },
+    });
+
+    return {
+      ...post,
+      createdAt: post.createdAt.toISOString(),
+      updatedAt: post.updatedAt.toISOString(),
+      scheduledFor: post.scheduledFor?.toISOString() || null,
+      publishedAt: post.publishedAt?.toISOString() || null,
+    };
   },
 
   // AUTOMATION REQUESTS / INBOX
   getPromptRequests: async () => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const items = await prisma.promptRequest.findMany({
-          include: { matchedPost: true, matchedPrompt: true },
-          orderBy: { createdAt: "desc" },
-          take: 100,
-        });
-
-        return items.map((r) => ({
-          ...r,
-          createdAt: r.createdAt.toISOString(),
-          deliveredAt: r.deliveredAt?.toISOString() || null,
-          matchedPrompt: r.matchedPrompt
-            ? {
-                ...r.matchedPrompt,
-                tags: r.matchedPrompt.tags.split(","),
-                generationSettings: r.matchedPrompt.generationSettings
-                  ? JSON.parse(r.matchedPrompt.generationSettings)
-                  : undefined,
-                createdAt: r.matchedPrompt.createdAt.toISOString(),
-                updatedAt: r.matchedPrompt.updatedAt.toISOString(),
-              }
-            : undefined,
-          matchedPost: r.matchedPost
-            ? {
-                ...r.matchedPost,
-                createdAt: r.matchedPost.createdAt.toISOString(),
-                updatedAt: r.matchedPost.updatedAt.toISOString(),
-                scheduledFor: r.matchedPost.scheduledFor?.toISOString() || null,
-                publishedAt: r.matchedPost.publishedAt?.toISOString() || null,
-              }
-            : undefined,
-        }));
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      return [];
     }
 
-    return memoryState.promptRequests.map((r) => {
-      const post = memoryState.posts.find((p) => p.id === r.matchedPostId);
-      const prompt = memoryState.prompts.find((p) => p.id === r.matchedPromptId);
-      return { ...r, matchedPost: post, matchedPrompt: prompt };
-    });
+    try {
+      const items = await prisma.promptRequest.findMany({
+        include: { matchedPost: true, matchedPrompt: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      });
+
+      return items.map((r) => ({
+        ...r,
+        createdAt: r.createdAt.toISOString(),
+        deliveredAt: r.deliveredAt?.toISOString() || null,
+        matchedPrompt: r.matchedPrompt
+          ? {
+              ...r.matchedPrompt,
+              tags: r.matchedPrompt.tags.split(","),
+              generationSettings: r.matchedPrompt.generationSettings
+                ? JSON.parse(r.matchedPrompt.generationSettings)
+                : undefined,
+              createdAt: r.matchedPrompt.createdAt.toISOString(),
+              updatedAt: r.matchedPrompt.updatedAt.toISOString(),
+            }
+          : undefined,
+        matchedPost: r.matchedPost
+          ? {
+              ...r.matchedPost,
+              createdAt: r.matchedPost.createdAt.toISOString(),
+              updatedAt: r.matchedPost.updatedAt.toISOString(),
+              scheduledFor: r.matchedPost.scheduledFor?.toISOString() || null,
+              publishedAt: r.matchedPost.publishedAt?.toISOString() || null,
+            }
+          : undefined,
+      }));
+    } catch (err: unknown) {
+      console.error("Database query failed in getPromptRequests:", err);
+      return [];
+    }
   },
 
   createPromptRequest: async (data: Omit<PromptRequestItem, "id" | "createdAt">) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const req = await prisma.promptRequest.create({
-          data: {
-            incomingCommentId: data.incomingCommentId,
-            instagramMediaId: data.instagramMediaId,
-            commenterId: data.commenterId,
-            commentText: data.commentText,
-            matchedPostId: data.matchedPostId,
-            matchedPromptId: data.matchedPromptId,
-            deliveryStatus: data.deliveryStatus,
-            deliveryMethod: data.deliveryMethod,
-            privateReplyId: data.privateReplyId,
-            errorMessage: data.errorMessage,
-            deliveredAt: data.deliveredAt ? new Date(data.deliveredAt) : null,
-          },
-        });
-        return {
-          ...req,
-          createdAt: req.createdAt.toISOString(),
-          deliveredAt: req.deliveredAt?.toISOString() || null,
-        };
-      }
-    } catch {
-      // Fallback
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Prompt request write could not be confirmed.`);
     }
 
-    const newReq: PromptRequestItem = {
-      ...data,
-      id: `req-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+    const req = await prisma.promptRequest.create({
+      data: {
+        incomingCommentId: data.incomingCommentId,
+        instagramMediaId: data.instagramMediaId,
+        commenterId: data.commenterId,
+        commentText: data.commentText,
+        matchedPostId: data.matchedPostId,
+        matchedPromptId: data.matchedPromptId,
+        deliveryStatus: data.deliveryStatus,
+        deliveryMethod: data.deliveryMethod,
+        privateReplyId: data.privateReplyId,
+        errorMessage: data.errorMessage,
+        deliveredAt: data.deliveredAt ? new Date(data.deliveredAt) : null,
+      },
+    });
+
+    return {
+      ...req,
+      createdAt: req.createdAt.toISOString(),
+      deliveredAt: req.deliveredAt?.toISOString() || null,
     };
-    memoryState.promptRequests.unshift(newReq);
-    return newReq;
+  },
+
+  updatePromptRequest: async (
+    id: string,
+    data: Partial<{
+      deliveryStatus: PromptRequestItem["deliveryStatus"];
+      privateReplyId: string | null;
+      errorMessage: string | null;
+      deliveredAt: string | null;
+      retryCount: number;
+    }>
+  ) => {
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Prompt request update could not be confirmed.`);
+    }
+
+    const updated = await prisma.promptRequest.update({
+      where: { id },
+      data: {
+        ...(data.deliveryStatus && { deliveryStatus: data.deliveryStatus }),
+        ...(data.privateReplyId !== undefined && { privateReplyId: data.privateReplyId }),
+        ...(data.errorMessage !== undefined && { errorMessage: data.errorMessage }),
+        ...(data.deliveredAt !== undefined && {
+          deliveredAt: data.deliveredAt ? new Date(data.deliveredAt) : null,
+        }),
+        ...(data.retryCount !== undefined && { retryCount: data.retryCount }),
+      },
+    });
+
+    return {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      deliveredAt: updated.deliveredAt?.toISOString() || null,
+    };
   },
 
   // SETTINGS & METRICS
-  getAutomationSettings: async () => {
+  getAutomationSettings: async (): Promise<AutomationSettingItem> => {
+    const defaultSettings: AutomationSettingItem = {
+      id: "default-automation-setting",
+      instagramAccountId: null,
+      isAutomationEnabled: true,
+      globalKeyword: "PROMPT",
+      replyTemplate: "Here is the photography prompt you requested: {prompt_url}",
+      maxRepliesPerCommenter: 1,
+      retentionHours: 24,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
     try {
       const dbCheck = await checkDatabaseConnection();
       if (dbCheck.ok) {
@@ -877,48 +833,50 @@ export const dbService = {
           };
         }
       }
-    } catch {
-      // Fallback
+    } catch (err: unknown) {
+      console.warn("Could not retrieve automation settings from DB, using default schema:", err);
     }
-    return memoryState.automationSettings;
+
+    return defaultSettings;
   },
 
-  updateAutomationSettings: async (data: Partial<AutomationSettingItem>) => {
-    try {
-      const dbCheck = await checkDatabaseConnection();
-      if (dbCheck.ok) {
-        const existing = await prisma.automationSetting.findFirst();
-        if (existing) {
-          const updated = await prisma.automationSetting.update({
-            where: { id: existing.id },
-            data: {
-              ...(data.isAutomationEnabled !== undefined && { isAutomationEnabled: data.isAutomationEnabled }),
-              ...(data.globalKeyword && { globalKeyword: data.globalKeyword.toUpperCase() }),
-              ...(data.replyTemplate && { replyTemplate: data.replyTemplate }),
-              ...(data.maxRepliesPerCommenter && { maxRepliesPerCommenter: data.maxRepliesPerCommenter }),
-              ...(data.retentionHours && { retentionHours: data.retentionHours }),
-            },
-          });
-          return {
-            ...updated,
-            createdAt: updated.createdAt.toISOString(),
-            updatedAt: updated.updatedAt.toISOString(),
-          };
-        }
-      }
-    } catch {
-      // Fallback
+  updateAutomationSettings: async (data: Partial<AutomationSettingItem>): Promise<AutomationSettingItem> => {
+    const dbCheck = await checkDatabaseConnection();
+    if (!dbCheck.ok) {
+      throw new DatabaseError(`Database connection unavailable: ${dbCheck.message}. Settings save could not be confirmed.`);
     }
 
-    memoryState.automationSettings = {
-      ...memoryState.automationSettings,
-      ...data,
-      globalKeyword: data.globalKeyword
-        ? data.globalKeyword.toUpperCase()
-        : memoryState.automationSettings.globalKeyword,
-      updatedAt: new Date().toISOString(),
+    const existing = await prisma.automationSetting.findFirst();
+    let updated;
+
+    if (existing) {
+      updated = await prisma.automationSetting.update({
+        where: { id: existing.id },
+        data: {
+          ...(data.isAutomationEnabled !== undefined && { isAutomationEnabled: data.isAutomationEnabled }),
+          ...(data.globalKeyword && { globalKeyword: data.globalKeyword.toUpperCase() }),
+          ...(data.replyTemplate && { replyTemplate: data.replyTemplate }),
+          ...(data.maxRepliesPerCommenter && { maxRepliesPerCommenter: data.maxRepliesPerCommenter }),
+          ...(data.retentionHours && { retentionHours: data.retentionHours }),
+        },
+      });
+    } else {
+      updated = await prisma.automationSetting.create({
+        data: {
+          isAutomationEnabled: data.isAutomationEnabled ?? true,
+          globalKeyword: (data.globalKeyword || "PROMPT").toUpperCase(),
+          replyTemplate: data.replyTemplate || "Here is the photography prompt you requested: {prompt_url}",
+          maxRepliesPerCommenter: data.maxRepliesPerCommenter ?? 1,
+          retentionHours: data.retentionHours ?? 24,
+        },
+      });
+    }
+
+    return {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
     };
-    return memoryState.automationSettings;
   },
 
   // DASHBOARD SUMMARY METRICS
@@ -934,6 +892,28 @@ export const dbService = {
     const successfulDeliveries = requests.filter((r) => r.deliveryStatus === "DELIVERED").length;
     const deliveryFailures = requests.filter((r) => r.deliveryStatus === "FAILED").length;
 
+    let recentActivity: ActivityLogItem[] = [];
+    const dbCheck = await checkDatabaseConnection();
+    if (dbCheck.ok) {
+      try {
+        const logs = await prisma.activityLog.findMany({
+          take: 5,
+          orderBy: { createdAt: "desc" },
+        });
+        recentActivity = logs.map((l) => ({
+          id: l.id,
+          action: l.action,
+          entityType: l.entityType,
+          entityId: l.entityId,
+          details: l.details ? JSON.parse(l.details) : null,
+          userId: l.userId,
+          createdAt: l.createdAt.toISOString(),
+        }));
+      } catch {
+        // Empty if no logs
+      }
+    }
+
     return {
       totalPrompts,
       publishedPosts,
@@ -941,7 +921,7 @@ export const dbService = {
       incomingRequests,
       successfulDeliveries,
       deliveryFailures,
-      recentActivity: memoryState.activityLogs.slice(0, 5),
+      recentActivity,
     };
   },
 };

@@ -232,13 +232,15 @@ function ComposerContent() {
 
       const json = await res.json();
 
-      if (!res.ok || json.error) {
-        throw new Error(json.error || "Failed to process post");
+      if (action === "PUBLISHED") {
+        if (json.data?.status !== "PUBLISHED" || !json.data?.instagramMediaId) {
+          throw new Error(json.error || "Meta publication could not be verified. Post was not published.");
+        }
       }
 
       const actionText =
         action === "PUBLISHED"
-          ? "Published to Instagram successfully!"
+          ? `Published to Instagram successfully! (Media ID: ${json.data.instagramMediaId})`
           : action === "SCHEDULED"
           ? "Scheduled into background queue!"
           : "Saved as draft!";

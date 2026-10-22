@@ -42,20 +42,26 @@ export default function AutomationInboxPage() {
     fetchInbox();
   }, []);
 
+  const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const handleRetry = async (requestId: string) => {
     try {
       setRetryingId(requestId);
+      setStatusMessage(null);
       const res = await fetch("/api/automation/retry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId }),
       });
       const json = await res.json();
-      if (json.success) {
-        fetchInbox();
+      if (!res.ok || json.error) {
+        throw new Error(json.error || "Retry failed");
       }
-    } catch {
-      // handle error
+      setStatusMessage({ type: "success", text: "Prompt delivery retried and verified successfully via Meta Private Reply!" });
+      fetchInbox();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Retry failed";
+      setStatusMessage({ type: "error", text: msg });
     } finally {
       setRetryingId(null);
     }
@@ -76,6 +82,25 @@ export default function AutomationInboxPage() {
       subtitle="Monitor incoming Instagram keyword comments, webhook processing results, and private replies"
     >
       <div className="space-y-6">
+        {statusMessage && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              statusMessage.type === "success"
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {statusMessage.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-rose-400" />
+              )}
+              <span>{statusMessage.text}</span>
+            </div>
+          </div>
+        )}
+
         {/* Metric Summary Bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="p-4 rounded-xl bg-[#111317] border border-[#21252e]">

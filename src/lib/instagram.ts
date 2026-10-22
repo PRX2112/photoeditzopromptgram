@@ -245,10 +245,10 @@ export const instagramService = {
       const publishData: InstagramMediaPublishResponse & { error?: { message: string } } =
         await publishRes.json();
 
-      if (!publishRes.ok || publishData.error) {
+      if (!publishRes.ok || publishData.error || !publishData.id) {
         return {
           success: false,
-          error: `Failed to publish media: ${publishData.error?.message || "Unknown error"}`,
+          error: `Failed to publish media: ${publishData.error?.message || "No media ID returned by Meta"}`,
         };
       }
 
@@ -314,9 +314,17 @@ export const instagramService = {
         };
       }
 
+      const messageId = data.message_id || data.id;
+      if (!messageId) {
+        return {
+          success: false,
+          error: "Meta Private Reply response succeeded but did not return a message ID",
+        };
+      }
+
       return {
         success: true,
-        messageId: data.message_id || data.id,
+        messageId,
       };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

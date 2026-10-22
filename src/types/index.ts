@@ -67,6 +67,8 @@ export interface InstagramAccountItem {
   username: string;
   name?: string | null;
   profilePictureUrl?: string | null;
+  accessTokenEncrypted?: string;
+  tokenExpiresAt?: string | null;
   isConnected: boolean;
   permissions?: string | null;
   createdAt: string;

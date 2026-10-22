@@ -43,16 +43,22 @@ export default function CalendarPage() {
     fetchPosts();
   }, []);
 
+  const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const handlePublishNow = async (id: string) => {
     try {
       setActionLoadingId(id);
+      setStatusMessage(null);
       const res = await fetch(`/api/posts/${id}/publish`, { method: "POST" });
       const json = await res.json();
-      if (json.success) {
-        fetchPosts();
+      if (!res.ok || json.error) {
+        throw new Error(json.error || "Publication failed");
       }
-    } catch {
-      // handle error
+      setStatusMessage({ type: "success", text: `Published to Instagram successfully! (Media ID: ${json.data?.instagramMediaId})` });
+      fetchPosts();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Publication error";
+      setStatusMessage({ type: "error", text: msg });
     } finally {
       setActionLoadingId(null);
     }
@@ -118,6 +124,25 @@ export default function CalendarPage() {
       subtitle="Track scheduled publication queue, live Instagram posts, and drafts"
     >
       <div className="space-y-6">
+        {statusMessage && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              statusMessage.type === "success"
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {statusMessage.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400" />
+              )}
+              <span>{statusMessage.text}</span>
+            </div>
+          </div>
+        )}
+
         {/* Top Filter and Actions */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#111317] border border-[#21252e] text-xs">
