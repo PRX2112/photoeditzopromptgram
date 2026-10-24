@@ -17,10 +17,7 @@ import {
   Clock,
   ExternalLink,
   RefreshCw,
-  Sliders,
-  Copy,
 } from "lucide-react";
-import { PHOTOGRAPHY_CATEGORIES } from "@/lib/utils";
 import type { PromptItem } from "@/types";
 
 function ComposerContent() {
@@ -37,6 +34,8 @@ function ComposerContent() {
 
   // Image state
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string>("");
+  const [uploadedBlobUrl, setUploadedBlobUrl] = useState<string>("");
+  const [uploadedBlobPathname, setUploadedBlobPathname] = useState<string>("");
   const [uploadedAssetKey, setUploadedAssetKey] = useState<string>("");
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageInputMethod, setImageInputMethod] = useState<"file" | "url">("file");
@@ -126,8 +125,12 @@ function ComposerContent() {
         throw new Error(json.error || "Image upload failed");
       }
 
-      setUploadedAssetKey(json.assetKey);
-      setImagePreviewUrl(json.publicUrl);
+      const publicUrl = json.publicUrl || json.blobUrl || "";
+      setUploadedBlobUrl(publicUrl);
+      setUploadedBlobPathname(json.pathname || "");
+      setUploadedAssetKey(json.pathname || "");
+      setImagePreviewUrl(publicUrl);
+      setStatusMessage({ type: "success", text: "Image uploaded and stored in Vercel Blob successfully!" });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Upload error";
       setStatusMessage({ type: "error", text: msg });
@@ -137,8 +140,10 @@ function ComposerContent() {
   };
 
   const handleDirectUrlApply = () => {
-    if (directImageUrl && directImageUrl.startsWith("https://")) {
+    if (directImageUrl && (directImageUrl.startsWith("https://") || directImageUrl.startsWith("http://"))) {
       setImagePreviewUrl(directImageUrl);
+      setUploadedBlobUrl(directImageUrl);
+      setUploadedBlobPathname("");
       setUploadedAssetKey("");
     }
   };
@@ -202,6 +207,24 @@ function ComposerContent() {
       return;
     }
 
+    if (uploadingImage) {
+      setStatusMessage({
+        type: "error",
+        text: "Image is currently uploading to cloud storage. Please wait until upload finishes before publishing.",
+      });
+      return;
+    }
+
+    const targetImageUrl = uploadedBlobUrl || (imagePreviewUrl && !imagePreviewUrl.startsWith("blob:") ? imagePreviewUrl : "");
+
+    if (action === "PUBLISHED" && !targetImageUrl) {
+      setStatusMessage({
+        type: "error",
+        text: "A valid public image is required to publish to Instagram. Please upload an image or provide a public URL.",
+      });
+      return;
+    }
+
     try {
       setSubmitting(true);
       setStatusMessage(null);
@@ -215,13 +238,15 @@ function ComposerContent() {
       const payload = {
         promptId: selectedPromptId,
         caption,
-        hashtags,
+        hashtags: hashtags || "",
         commentKeyword: commentKeyword.toUpperCase(),
         mediaType: "IMAGE",
-        temporaryImageUrl: imagePreviewUrl || null,
-        temporaryAssetKey: uploadedAssetKey || null,
+        blobUrl: targetImageUrl || undefined,
+        blobPathname: uploadedBlobPathname || undefined,
+        temporaryImageUrl: targetImageUrl || undefined,
+        temporaryAssetKey: uploadedBlobPathname || undefined,
         status: action,
-        scheduledFor: scheduledDateTimeIso,
+        scheduledFor: scheduledDateTimeIso || undefined,
       };
 
       const res = await fetch("/api/posts", {
@@ -232,15 +257,13 @@ function ComposerContent() {
 
       const json = await res.json();
 
-      if (action === "PUBLISHED") {
-        if (json.data?.status !== "PUBLISHED" || !json.data?.instagramMediaId) {
-          throw new Error(json.error || "Meta publication could not be verified. Post was not published.");
-        }
+      if (!res.ok || json.error) {
+        throw new Error(json.error || "Failed to process post");
       }
 
       const actionText =
         action === "PUBLISHED"
-          ? `Published to Instagram successfully! (Media ID: ${json.data.instagramMediaId})`
+          ? "Published to Instagram successfully!"
           : action === "SCHEDULED"
           ? "Scheduled into background queue!"
           : "Saved as draft!";
@@ -728,28 +751,28 @@ function ComposerContent() {
               {isScheduling ? (
                 <button
                   type="button"
-                  disabled={submitting || !scheduleDate}
+                  disabled={submitting || uploadingImage || !scheduleDate}
                   onClick={() => handleSubmitPost("SCHEDULED")}
                   className="w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-black text-xs font-semibold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] disabled:opacity-50"
                 >
                   <Calendar className="w-4 h-4" />
-                  <span>{submitting ? "Scheduling..." : "Schedule Publication"}</span>
+                  <span>{uploadingImage ? "Uploading Image to Storage..." : submitting ? "Scheduling..." : "Schedule Publication"}</span>
                 </button>
               ) : (
                 <button
                   type="button"
-                  disabled={submitting}
+                  disabled={submitting || uploadingImage}
                   onClick={() => handleSubmitPost("PUBLISHED")}
                   className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-semibold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] disabled:opacity-50"
                 >
                   <Send className="w-4 h-4 stroke-[2.5]" />
-                  <span>{submitting ? "Publishing to Instagram..." : "Publish to Instagram Now"}</span>
+                  <span>{uploadingImage ? "Uploading Image to Storage..." : submitting ? "Publishing to Instagram..." : "Publish to Instagram Now"}</span>
                 </button>
               )}
 
               <button
                 type="button"
-                disabled={submitting}
+                disabled={submitting || uploadingImage}
                 onClick={() => handleSubmitPost("DRAFT")}
                 className="w-full py-2 rounded-lg bg-[#181c25] hover:bg-[#202532] text-slate-300 text-xs font-medium flex items-center justify-center gap-2 border border-[#262c3a] transition-colors"
               >

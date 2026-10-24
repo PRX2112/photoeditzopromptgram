@@ -7,9 +7,7 @@ import {
   Layers,
   Sparkles,
   ExternalLink,
-  Sliders,
   CheckCircle2,
-  Calendar,
 } from "lucide-react";
 import Link from "next/link";
 import { formatDate } from "@/lib/utils";

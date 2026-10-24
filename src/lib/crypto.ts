@@ -44,26 +44,21 @@ export function decryptToken(encryptedPayload: string): string {
 
   const parts = encryptedPayload.split(":");
   if (parts.length !== 3) {
-    // If not in iv:authTag:ciphertext format, return raw payload (e.g. test tokens)
-    return encryptedPayload;
+    throw new Error("Invalid encrypted token format");
   }
 
   const [ivHex, authTagHex, ciphertextHex] = parts;
-  try {
-    const key = getEncryptionKey();
-    const iv = Buffer.from(ivHex, "hex");
-    const authTag = Buffer.from(authTagHex, "hex");
+  const key = getEncryptionKey();
+  const iv = Buffer.from(ivHex, "hex");
+  const authTag = Buffer.from(authTagHex, "hex");
 
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
 
-    let decrypted = decipher.update(ciphertextHex, "hex", "utf8");
-    decrypted += decipher.final("utf8");
+  let decrypted = decipher.update(ciphertextHex, "hex", "utf8");
+  decrypted += decipher.final("utf8");
 
-    return decrypted;
-  } catch {
-    throw new Error("Failed to decrypt access token. The encryption key may have changed or token is corrupt.");
-  }
+  return decrypted;
 }
 
 /**

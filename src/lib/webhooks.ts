@@ -1,12 +1,15 @@
+import crypto from "crypto";
+import { prisma, checkDatabaseConnection } from "./prisma";
 import { dbService } from "./db-service";
-import { instagramService } from "./instagram";
-import type { InstagramWebhookPayload } from "@/types";
+import { dmReservationService } from "./instagram/dm-reservation";
+import type { InstagramWebhookPayload, PostItem, PromptItem } from "@/types";
 
 export interface ProcessCommentResult {
   commentId: string;
-  action: "DELIVERED" | "IGNORED" | "FAILED" | "DUPLICATE";
+  action: "DELIVERED" | "IGNORED" | "FAILED" | "DUPLICATE" | "SUPPRESSED";
   message?: string;
   slug?: string;
+  reservationId?: string;
 }
 
 /**
@@ -33,15 +36,19 @@ export function matchesKeyword(commentText: string, expectedKeyword: string): bo
 
 export const webhookProcessor = {
   /**
-   * Process incoming Instagram webhook payload
+   * Process incoming Instagram webhook payload with durable ingestion and per-user/per-post DM idempotency
    */
-  processWebhookEvent: async (payload: InstagramWebhookPayload): Promise<ProcessCommentResult[]> => {
+  processWebhookEvent: async (
+    payload: InstagramWebhookPayload,
+    rawSignature?: string | null
+  ): Promise<ProcessCommentResult[]> => {
     const results: ProcessCommentResult[] = [];
+    const dbCheck = await checkDatabaseConnection();
 
     // Verify automation setting is globally enabled
     const settings = await dbService.getAutomationSettings();
     if (!settings.isAutomationEnabled) {
-      return [{ commentId: "all", action: "IGNORED", message: "Automation is globally disabled in Settings" }];
+      return [{ commentId: "all", action: "IGNORED", message: "Automation globally disabled" }];
     }
 
     const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -54,210 +61,232 @@ export const webhookProcessor = {
         const commentId = comment.id;
         const commentText = comment.text || "";
         const mediaId = comment.media?.id;
-        const commenterId = comment.from?.id;
+        const instagramScopedUserId = comment.from?.id; // Stable IGSID
 
-        // 1. Idempotency Check: Prevent duplicate replies to the same comment
-        const existingRequests = await dbService.getPromptRequests();
-        const alreadyProcessed = existingRequests.find((r) => r.incomingCommentId === commentId);
-
-        if (alreadyProcessed) {
+        if (!commentId || !mediaId || !instagramScopedUserId) {
           results.push({
-            commentId,
-            action: "DUPLICATE",
-            message: `Comment ${commentId} already processed with status: ${alreadyProcessed.deliveryStatus}`,
+            commentId: commentId || "unknown",
+            action: "IGNORED",
+            message: "Missing commentId, mediaId, or commenter IGSID in webhook payload",
           });
           continue;
         }
 
-        // 2. Check 7-day Meta private reply window
+        // 1. Durable Webhook Ingestion & Comment Deduplication
+        if (dbCheck.ok) {
+          try {
+            await prisma.webhookEvent.create({
+              data: {
+                eventId: `evt_${commentId}`,
+                eventType: "comment",
+                commentId: commentId,
+                rawPayload: JSON.stringify(change),
+                signature: rawSignature || null,
+                isProcessed: false,
+              },
+            });
+          } catch (err: unknown) {
+            // P2002: duplicate commentId or eventId
+            if ((err as { code?: string })?.code === "P2002") {
+              results.push({
+                commentId,
+                action: "DUPLICATE",
+                message: `Duplicate webhook event for comment ${commentId}. Acknowledged without reprocessing.`,
+              });
+              continue;
+            }
+          }
+        }
+
+        // 2. Check 7-Day Meta Private Reply Window
         if (comment.created_time) {
           const commentDate = new Date(comment.created_time * 1000);
           const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000);
           if (commentDate < sevenDaysAgo) {
-            try {
-              await dbService.createPromptRequest({
-                incomingCommentId: commentId,
-                instagramMediaId: mediaId || "unknown",
-                commenterId,
-                commentText,
-                matchedPostId: null,
-                matchedPromptId: null,
-                deliveryStatus: "FAILED",
-                deliveryMethod: "PRIVATE_REPLY",
-                privateReplyId: null,
-                retryCount: 0,
-                errorMessage: "Comment is older than 7 days; outside Meta Private Reply window",
-                deliveredAt: null,
-              });
-            } catch (dbErr) {
-              console.error("DB persist error in webhook:", dbErr);
-            }
-
             results.push({
               commentId,
-              action: "FAILED",
-              message: "Comment is older than 7 days; outside Meta Private Reply window",
+              action: "SUPPRESSED",
+              message: "Comment is older than 7 days; outside Meta Private Reply window.",
             });
             continue;
           }
         }
 
-        // 3. Find matched Post record by Instagram Media ID
-        const allPosts = await dbService.getPosts();
-        const matchedPost = allPosts.find((p) => p.instagramMediaId === mediaId);
-
-        // Determine target keyword (Post-specific keyword takes precedence over globalKeyword)
-        const targetKeyword = matchedPost?.commentKeyword || settings.globalKeyword || "PROMPT";
-
-        // 4. Keyword matching
-        const isMatched = matchesKeyword(commentText, targetKeyword);
-
-        if (!isMatched) {
-          // Record as IGNORED request for visibility in automation logs
-          try {
-            await dbService.createPromptRequest({
-              incomingCommentId: commentId,
-              instagramMediaId: mediaId || "unknown",
-              commenterId,
-              commentText,
-              matchedPostId: matchedPost?.id || null,
-              matchedPromptId: matchedPost?.promptId || null,
-              deliveryStatus: "IGNORED",
-              deliveryMethod: "NONE",
-              privateReplyId: null,
-              retryCount: 0,
-              errorMessage: `Comment did not contain keyword: ${targetKeyword}`,
-              deliveredAt: null,
-            });
-          } catch (dbErr) {
-            console.error("DB persist error in webhook:", dbErr);
+        // 3. Resolve Post by Instagram Media ID
+        let matchedPost: (PostItem & { prompt?: PromptItem }) | null = null;
+        if (dbCheck.ok) {
+          const dbPost = await prisma.post.findFirst({
+            where: { instagramMediaId: mediaId },
+            include: { prompt: true },
+          });
+          if (dbPost) {
+            matchedPost = {
+              ...dbPost,
+              status: dbPost.status,
+              createdAt: dbPost.createdAt.toISOString(),
+              updatedAt: dbPost.updatedAt.toISOString(),
+              scheduledFor: dbPost.scheduledFor?.toISOString() || null,
+              publishedAt: dbPost.publishedAt?.toISOString() || null,
+              imageUploadedAt: dbPost.imageUploadedAt?.toISOString() || null,
+              imageDeletedAt: dbPost.imageDeletedAt?.toISOString() || null,
+              prompt: dbPost.prompt
+                ? {
+                    ...dbPost.prompt,
+                    tags: dbPost.prompt.tags.split(","),
+                    generationSettings: dbPost.prompt.generationSettings
+                      ? JSON.parse(dbPost.prompt.generationSettings)
+                      : undefined,
+                    createdAt: dbPost.prompt.createdAt.toISOString(),
+                    updatedAt: dbPost.prompt.updatedAt.toISOString(),
+                  }
+                : undefined,
+            };
           }
+        } else {
+          const allPosts = await dbService.getPosts();
+          matchedPost = (allPosts.find((p) => p.instagramMediaId === mediaId) as (PostItem & { prompt?: PromptItem })) || null;
+        }
 
+        if (!matchedPost) {
           results.push({
             commentId,
             action: "IGNORED",
-            message: `No matching keyword '${targetKeyword}' found in comment text`,
+            message: `No published post found for media ID ${mediaId}.`,
           });
           continue;
         }
 
-        // 5. Match Prompt and construct public URL
-        const matchedPrompt = matchedPost?.promptId
-          ? await dbService.getPromptById(matchedPost.promptId)
-          : null;
+        // 4. Keyword matching (post-specific keyword takes precedence over global)
+        const targetKeyword = matchedPost.commentKeyword || settings.globalKeyword || "PROMPT";
+        const isMatched = matchesKeyword(commentText, targetKeyword);
 
-        if (!matchedPrompt) {
-          try {
-            await dbService.createPromptRequest({
-              incomingCommentId: commentId,
-              instagramMediaId: mediaId || "unknown",
-              commenterId,
-              commentText,
-              matchedPostId: matchedPost?.id || null,
-              matchedPromptId: null,
-              deliveryStatus: "FAILED",
-              deliveryMethod: "PRIVATE_REPLY",
-              privateReplyId: null,
-              retryCount: 0,
-              errorMessage: "No prompt associated with this Instagram post",
-              deliveredAt: null,
-            });
-          } catch (dbErr) {
-            console.error("DB persist error in webhook:", dbErr);
-          }
-
+        if (!isMatched) {
           results.push({
             commentId,
-            action: "FAILED",
-            message: "No prompt associated with this post",
+            action: "IGNORED",
+            message: `Comment did not contain keyword '${targetKeyword}'.`,
           });
           continue;
         }
 
-        const promptUrl = `${baseUrl}/p/${matchedPrompt.slug}`;
+        // Check if comment was authored by the page/account itself
+        const pageIgId = process.env.META_INSTAGRAM_ACCOUNT_ID || "17841479958291582";
+        if (instagramScopedUserId === pageIgId) {
+          results.push({
+            commentId,
+            action: "SUPPRESSED",
+            message: `Comment was authored by post owner (@prx_dev). Meta Graph API prohibits sending automated private replies to the account's own comments. Test by commenting from a different Instagram account.`,
+          });
+          continue;
+        }
+
+        // 5. ATOMIC PER-USER/PER-POST RESERVATION
+        // Enforce: At most ONE automated DM per unique Instagram user per published post
+        const reservation = await dmReservationService.reserveDelivery({
+          postId: matchedPost.id,
+          instagramScopedUserId,
+          commentId,
+          commentText,
+          commentTimestamp: comment.created_time ? new Date(comment.created_time * 1000) : new Date(),
+          matchedPromptId: matchedPost.promptId,
+          instagramAccountId: matchedPost.instagramAccountId,
+        });
+
+        if (reservation.isDuplicate) {
+          results.push({
+            commentId,
+            action: "SUPPRESSED",
+            reservationId: reservation.reservationId,
+            message: `User ${instagramScopedUserId} already received or reserved a DM for post ${matchedPost.id}. Suppressed repeat comment.`,
+          });
+          continue;
+        }
+
+        // 6. Format Reply Text
+        const promptSlug = matchedPost.prompt?.slug || "sample-prompt";
+        const promptUrl = `${baseUrl}/p/${promptSlug}`;
         const replyText = settings.replyTemplate
           ? settings.replyTemplate
               .replace("{prompt_url}", promptUrl)
-              .replace("{prompt_title}", matchedPrompt.title)
-              .replace("{category}", matchedPrompt.category)
+              .replace("{prompt_title}", matchedPost.prompt?.title || "")
+              .replace("{category}", matchedPost.prompt?.category || "")
           : `Here is the photography prompt you requested: ${promptUrl}`;
 
-        // 6. Send private reply via official Meta API
-        const connectedAccount = await dbService.getConnectedInstagramAccount();
-
-        if (!connectedAccount || !connectedAccount.accessTokenEncrypted) {
-          // Cannot deliver without a connected Instagram account
-          try {
-            await dbService.createPromptRequest({
-              incomingCommentId: commentId,
-              instagramMediaId: mediaId || "unknown",
-              commenterId,
-              commentText,
-              matchedPostId: matchedPost?.id || null,
-              matchedPromptId: matchedPrompt.id,
-              deliveryStatus: "FAILED",
-              deliveryMethod: "PRIVATE_REPLY",
-              privateReplyId: null,
-              retryCount: 0,
-              errorMessage: "No connected Instagram Professional account found to dispatch private reply",
-              deliveredAt: null,
-            });
-          } catch (dbErr) {
-            console.error("DB persist error in webhook:", dbErr);
-          }
-
-          results.push({
-            commentId,
-            action: "FAILED",
-            message: "No connected Instagram account found to send private reply",
-          });
-          continue;
-        }
-
-        // Real API invocation
-        const sendResult = await instagramService.sendPrivateReply(
-          connectedAccount.accessTokenEncrypted,
-          connectedAccount.igUserId,
+        // 7. Execute Private Reply Delivery
+        const deliveryResult = await dmReservationService.executeDelivery({
+          reservationId: reservation.reservationId!,
           commentId,
-          replyText
-        );
+          messageText: replyText,
+          instagramAccountId: matchedPost.instagramAccountId,
+        });
 
-        const isDelivered = sendResult.success && Boolean(sendResult.messageId);
-
-        // 7. Persist verified PromptRequest record
-        try {
-          await dbService.createPromptRequest({
-            incomingCommentId: commentId,
-            instagramMediaId: mediaId || "unknown",
-            commenterId,
-            commentText,
-            matchedPostId: matchedPost?.id || null,
-            matchedPromptId: matchedPrompt.id,
-            deliveryStatus: isDelivered ? "DELIVERED" : "FAILED",
-            deliveryMethod: "PRIVATE_REPLY",
-            privateReplyId: isDelivered ? sendResult.messageId || null : null,
-            retryCount: 0,
-            errorMessage: isDelivered ? null : sendResult.error || "Meta private reply failed",
-            deliveredAt: isDelivered ? new Date().toISOString() : null,
+        // 8. Mark WebhookEvent as processed
+        if (dbCheck.ok) {
+          await prisma.webhookEvent.updateMany({
+            where: { commentId },
+            data: { isProcessed: true, processedAt: new Date() },
           });
-        } catch (dbErr) {
-          console.error("DB persist error in webhook:", dbErr);
         }
 
         results.push({
           commentId,
-          action: isDelivered ? "DELIVERED" : "FAILED",
-          slug: matchedPrompt.slug,
-          message: isDelivered
-            ? `Prompt delivered via private reply: ${promptUrl}`
-            : `Failed to deliver private reply: ${sendResult.error}`,
+          action: deliveryResult.success ? "DELIVERED" : "FAILED",
+          reservationId: reservation.reservationId,
+          slug: promptSlug,
+          message: deliveryResult.success
+            ? `Private reply sent with prompt link: ${promptUrl}`
+            : `Delivery failed: ${deliveryResult.error}`,
         });
       }
     }
 
     return results;
   },
+
+  /**
+   * Verify HMAC-SHA256 signature from Meta webhook request
+   */
+  verifySignature: (
+    rawBody: string,
+    signatureHeader?: string | null,
+    secret?: string
+  ): boolean => {
+    const appSecret = secret || process.env.META_APP_SECRET;
+    if (!signatureHeader || !appSecret) {
+      return false;
+    }
+
+    try {
+      const parts = signatureHeader.split("=");
+      if (parts.length !== 2 || parts[0] !== "sha256") {
+        return false;
+      }
+
+      const expectedHash = parts[1];
+      const hmac = crypto.createHmac("sha256", appSecret);
+      hmac.update(rawBody);
+      const calculatedHash = hmac.digest("hex");
+
+      const expectedBuffer = Buffer.from(expectedHash, "hex");
+      const calculatedBuffer = Buffer.from(calculatedHash, "hex");
+
+      if (expectedBuffer.length !== calculatedBuffer.length) {
+        return false;
+      }
+
+      return crypto.timingSafeEqual(expectedBuffer, calculatedBuffer);
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Verify comment is within Meta's 7-day allowed messaging window
+   */
+  isCommentWithinMessagingWindow: (createdTimeSeconds: number): boolean => {
+    if (!createdTimeSeconds) return false;
+    const commentDateMs = createdTimeSeconds * 1000;
+    const sevenDaysAgoMs = Date.now() - 7 * 86400 * 1000;
+    return commentDateMs >= sevenDaysAgoMs;
+  },
 };
-
-export const webhookHandler = webhookProcessor;
-

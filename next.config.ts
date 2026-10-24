@@ -11,4 +11,5 @@ const nextConfig: NextConfig = {
   },
 };
 
+// Photographer Prompt Hub Next.js Configuration
 export default nextConfig;

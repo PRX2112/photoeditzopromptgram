@@ -62,13 +62,29 @@ RULES:
 }
 `;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: promptInstruction,
-          config: {
-            responseMimeType: "application/json",
-          },
-        });
+        let response;
+        const candidateModels = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
+        let lastError: unknown;
+
+        for (const candidate of candidateModels) {
+          try {
+            response = await ai.models.generateContent({
+              model: candidate,
+              contents: promptInstruction,
+              config: {
+                responseMimeType: "application/json",
+              },
+            });
+            if (response && response.text) break;
+          } catch (modelError) {
+            lastError = modelError;
+            continue;
+          }
+        }
+
+        if (!response || !response.text) {
+          throw lastError || new Error("Failed to generate content with available Gemini models");
+        }
 
         const rawText = response.text?.trim() || "";
         const parsedJson = JSON.parse(rawText);

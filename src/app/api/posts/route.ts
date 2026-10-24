@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { dbService } from "@/lib/db-service";
-import { instagramService } from "@/lib/instagram";
-import { storageService } from "@/lib/storage";
 import { queueService } from "@/lib/queue";
+import { instagramPublishingService } from "@/lib/instagram/publishing";
 import { z } from "zod";
 
 const CreatePostSchema = z.object({
   promptId: z.string().min(1, "Associated prompt is required"),
   caption: z.string().min(1, "Caption is required"),
-  hashtags: z.string().default(""),
+  hashtags: z.string().nullable().optional().default(""),
   commentKeyword: z.string().min(1, "Comment keyword is required"),
-  mediaType: z.string().default("IMAGE"),
-  temporaryImageUrl: z.string().optional(),
-  temporaryAssetKey: z.string().optional(),
+  mediaType: z.string().nullable().optional().default("IMAGE"),
+  blobUrl: z.string().nullable().optional(),
+  blobPathname: z.string().nullable().optional(),
+  temporaryImageUrl: z.string().nullable().optional(),
+  temporaryAssetKey: z.string().nullable().optional(),
   status: z.enum(["DRAFT", "SCHEDULED", "PUBLISHED"]),
   scheduledFor: z.string().nullable().optional(),
 });
@@ -51,136 +52,66 @@ export async function POST(request: NextRequest) {
 
     const data = parsed.data;
     const keyword = data.commentKeyword.toUpperCase();
+    const finalBlobUrl = data.blobUrl || data.temporaryImageUrl || undefined;
 
-    // 1. If "PUBLISHED" (Publish Now) is requested
+    // 1. Create Post Record in Database
+    const post = await dbService.createPost({
+      promptId: data.promptId,
+      caption: data.caption,
+      hashtags: data.hashtags || "",
+      commentKeyword: keyword,
+      mediaType: data.mediaType || "IMAGE",
+      blobUrl: finalBlobUrl,
+      blobPathname: data.blobPathname || undefined,
+      temporaryImageUrl: finalBlobUrl,
+      temporaryAssetKey: data.temporaryAssetKey || undefined,
+      imageUploadedAt: new Date().toISOString(),
+      imageLifecycleStatus: "READY_TO_PUBLISH",
+      status: data.status === "PUBLISHED" ? "DRAFT" : data.status, // temporarily DRAFT if about to publish
+      scheduledFor: data.scheduledFor ? new Date(data.scheduledFor).toISOString() : null,
+      publishedAt: null,
+    });
+
+    // 2. If "PUBLISHED" (Publish Now) is requested:
+    // Execute official publishing workflow with container verification & cleanup enqueuing
     if (data.status === "PUBLISHED") {
-      if (!data.temporaryImageUrl) {
-        return NextResponse.json(
-          { error: "An image URL is required to publish to Instagram." },
-          { status: 400 }
-        );
-      }
+      const publishResult = await instagramPublishingService.publishPost(post.id, "api-composer");
 
-      if (!instagramService.isConfigured()) {
-        return NextResponse.json(
-          { error: "Meta Instagram credentials (META_APP_ID, META_APP_SECRET) are not configured." },
-          { status: 400 }
-        );
-      }
-
-      const connectedAccount = await dbService.getConnectedInstagramAccount();
-      if (!connectedAccount) {
+      if (!publishResult.success) {
         return NextResponse.json(
           {
-            error:
-              "No connected Instagram Professional account found. Please connect an account in Settings before publishing.",
+            error: publishResult.error || "Publication failed",
+            isAmbiguous: publishResult.isAmbiguous,
+            postId: post.id,
           },
           { status: 400 }
         );
       }
 
-      if (!connectedAccount.accessTokenEncrypted) {
-        return NextResponse.json(
-          { error: "Connected Instagram account is missing an access token. Please reconnect the account." },
-          { status: 400 }
-        );
-      }
+      const updated = await dbService.getPosts();
+      const confirmedPost = updated.find((p) => p.id === post.id);
 
-      const fullCaption = `${data.caption}\n\n${data.hashtags}`.trim();
-      const publishResult = await instagramService.publishImagePost(
-        connectedAccount.accessTokenEncrypted,
-        connectedAccount.igUserId,
-        data.temporaryImageUrl,
-        fullCaption
-      );
-
-      if (!publishResult.success || !publishResult.mediaId) {
-        return NextResponse.json(
-          { error: `Meta Instagram publish failed: ${publishResult.error || "No media ID returned"}` },
-          { status: 502 }
-        );
-      }
-
-      // Clean up ephemeral asset immediately after confirmed successful publish
-      if (data.temporaryAssetKey) {
-        await storageService.deleteTemporaryAsset(data.temporaryAssetKey);
-      }
-
-      // Persist to database only after verified Meta publication
-      const post = await dbService.createPost({
-        promptId: data.promptId,
-        instagramAccountId: connectedAccount.id,
-        caption: data.caption,
-        hashtags: data.hashtags,
-        commentKeyword: keyword,
-        mediaType: data.mediaType,
-        temporaryImageUrl: data.temporaryImageUrl,
-        temporaryAssetKey: null,
-        instagramMediaId: publishResult.mediaId,
-        instagramPermalink: publishResult.permalink || null,
-        status: "PUBLISHED",
-        publishedAt: new Date().toISOString(),
-        scheduledFor: null,
-      });
-
-      return NextResponse.json({ success: true, data: post }, { status: 201 });
+      return NextResponse.json({ success: true, data: confirmedPost || post }, { status: 201 });
     }
 
-    // 2. If "SCHEDULED" is requested
+    // 3. If "SCHEDULED" is requested
     if (data.status === "SCHEDULED") {
       if (!data.scheduledFor) {
-        return NextResponse.json(
-          { error: "Scheduled date and time are required for scheduled posts." },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Scheduled date is required for scheduled posts" }, { status: 400 });
       }
 
-      const scheduledTime = new Date(data.scheduledFor);
-      if (isNaN(scheduledTime.getTime()) || scheduledTime <= new Date()) {
-        return NextResponse.json(
-          { error: "Scheduled time must be a valid future date and time." },
-          { status: 400 }
-        );
-      }
-
-      const connectedAccount = await dbService.getConnectedInstagramAccount();
-
-      const post = await dbService.createPost({
-        promptId: data.promptId,
-        instagramAccountId: connectedAccount?.id || null,
-        caption: data.caption,
-        hashtags: data.hashtags,
-        commentKeyword: keyword,
-        mediaType: data.mediaType,
-        temporaryImageUrl: data.temporaryImageUrl,
-        temporaryAssetKey: data.temporaryAssetKey,
+      await dbService.updatePost(post.id, {
         status: "SCHEDULED",
         scheduledFor: data.scheduledFor,
-        publishedAt: null,
       });
 
       // Schedule background job in database queue
-      await queueService.scheduleJob("PUBLISH_POST", { postId: post.id }, scheduledTime);
+      await queueService.scheduleJob("PUBLISH_POST", { postId: post.id }, new Date(data.scheduledFor));
 
       return NextResponse.json({ success: true, data: post }, { status: 201 });
     }
 
-    // 3. Otherwise "DRAFT"
-    const connectedAccount = await dbService.getConnectedInstagramAccount();
-    const post = await dbService.createPost({
-      promptId: data.promptId,
-      instagramAccountId: connectedAccount?.id || null,
-      caption: data.caption,
-      hashtags: data.hashtags,
-      commentKeyword: keyword,
-      mediaType: data.mediaType,
-      temporaryImageUrl: data.temporaryImageUrl,
-      temporaryAssetKey: data.temporaryAssetKey,
-      status: "DRAFT",
-      scheduledFor: null,
-      publishedAt: null,
-    });
-
+    // 4. Otherwise "DRAFT"
     return NextResponse.json({ success: true, data: post }, { status: 201 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal server error";

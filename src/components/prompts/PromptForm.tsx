@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { slugify, PHOTOGRAPHY_CATEGORIES } from "@/lib/utils";
-import { Sparkles, Save, ArrowLeft, Camera, Sliders, ExternalLink } from "lucide-react";
+import { Sparkles, Save, ArrowLeft, Camera } from "lucide-react";
 import Link from "next/link";
 import type { PromptItem } from "@/types";
 

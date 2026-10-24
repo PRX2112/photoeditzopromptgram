@@ -226,19 +226,27 @@ async function main() {
 
         // Add a sample delivered prompt request
         await prisma.promptRequest.upsert({
-          where: { incomingCommentId: "ig_comment_991827364" },
+          where: {
+            postId_instagramScopedUserId: {
+              postId: post.id,
+              instagramScopedUserId: "ig_user_449201928",
+            },
+          },
           update: {},
           create: {
+            postId: post.id,
+            instagramScopedUserId: "ig_user_449201928",
+            firstCommentId: "ig_comment_991827364",
             incomingCommentId: "ig_comment_991827364",
             instagramMediaId: post.instagramMediaId!,
-            commenterId: "ig_user_449201928",
             commentText: "BRIDAL please! Loving the rim backlight tones",
-            matchedPostId: post.id,
             matchedPromptId: prompt.id,
-            deliveryStatus: "DELIVERED",
+            deliveryStatus: "SENT",
             deliveryMethod: "PRIVATE_REPLY",
+            metaMessageId: "msg_ig_8829102",
             privateReplyId: "msg_ig_8829102",
             deliveredAt: new Date(Date.now() - 3600 * 1000 * 23),
+            sentAt: new Date(Date.now() - 3600 * 1000 * 23),
           },
         });
       }

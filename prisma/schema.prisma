@@ -6,8 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -24,10 +25,21 @@ enum PostStatus {
   CANCELLED
 }
 
+enum ImageLifecycleStatus {
+  UPLOADED
+  READY_TO_PUBLISH
+  PUBLISHING
+  PUBLISHED
+  CLEANUP_PENDING
+  DELETED
+  CLEANUP_FAILED
+}
+
 enum JobType {
   PUBLISH_POST
-  CLEANUP_TEMP_ASSETS
-  RETRY_PRIVATE_REPLY
+  RECONCILE_PUBLICATION
+  CLEANUP_BLOB
+  DELIVER_INSTAGRAM_DM
 }
 
 enum JobStatus {
@@ -38,11 +50,13 @@ enum JobStatus {
   CANCELLED
 }
 
-enum DeliveryStatus {
-  PENDING
-  DELIVERED
+enum DMReservationStatus {
+  RESERVED
+  SENDING
+  SENT
   FAILED
-  IGNORED
+  UNKNOWN
+  SUPPRESSED
 }
 
 model User {
@@ -103,31 +117,48 @@ model Prompt {
 }
 
 model Post {
-  id                 String             @id @default(cuid())
-  promptId           String
-  prompt             Prompt             @relation(fields: [promptId], references: [id], onDelete: Cascade)
-  instagramAccountId String?
-  instagramAccount   InstagramAccount?  @relation(fields: [instagramAccountId], references: [id], onDelete: SetNull)
-  caption            String             @db.Text
-  hashtags           String             @db.Text // Comma or space separated hashtags
-  commentKeyword     String             // Configured keyword to trigger prompt delivery (e.g. BRIDAL)
-  mediaType          String             @default("IMAGE") // IMAGE, CAROUSEL, REELS
-  temporaryImageUrl  String?            @db.Text // Ephemeral storage URL
-  temporaryAssetKey  String?            // Reference key for deletion after publish
-  instagramMediaId   String?            @unique
-  instagramPermalink String?            @db.Text
-  status             PostStatus         @default(DRAFT)
-  scheduledFor       DateTime?
-  publishedAt        DateTime?
-  errorMessage       String?            @db.Text
-  retryCount         Int                @default(0)
-  promptRequests     PromptRequest[]
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  id                     String               @id @default(cuid())
+  promptId               String
+  prompt                 Prompt               @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  instagramAccountId     String?
+  instagramAccount       InstagramAccount?    @relation(fields: [instagramAccountId], references: [id], onDelete: SetNull)
+  caption                String               @db.Text
+  hashtags               String               @db.Text // Comma or space separated hashtags
+  commentKeyword         String               // Configured keyword to trigger prompt delivery (e.g. BRIDAL)
+  mediaType              String               @default("IMAGE") // IMAGE, CAROUSEL, REELS
+
+  // Vercel Blob & Image Lifecycle Tracking
+  blobUrl                String?              @db.Text // Temporary Vercel Blob URL
+  blobPathname           String?              // Storage key / pathname in Vercel Blob
+  temporaryImageUrl      String?              @db.Text // Backward-compatible ephemeral storage URL
+  temporaryAssetKey      String?              // Legacy reference key
+  imageUploadedAt        DateTime?            @default(now())
+  imageLifecycleStatus   ImageLifecycleStatus @default(UPLOADED)
+  imageDeletedAt         DateTime?
+  cleanupAttempts        Int                  @default(0)
+  lastCleanupError       String?              @db.Text
+
+  // Meta Instagram Publishing & Reconciliation
+  containerId            String?              // Instagram media container ID
+  instagramMediaId       String?              @unique // Confirmed Instagram Media ID
+  instagramPermalink     String?              @db.Text
+  status                 PostStatus           @default(DRAFT)
+  scheduledFor           DateTime?
+  publishedAt            DateTime?            // Confirmed publication timestamp
+  publicationAttempts    Int                  @default(0)
+  lastPublishError       String?              @db.Text
+  reconciliationMetadata String?              @db.Text // JSON containing retry/reconciliation details
+  errorMessage           String?              @db.Text
+  retryCount             Int                  @default(0)
+
+  promptRequests         PromptRequest[]
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
 
   @@index([promptId])
   @@index([instagramAccountId])
   @@index([status])
+  @@index([imageLifecycleStatus])
   @@index([scheduledFor])
   @@index([instagramMediaId])
 }
@@ -154,6 +185,7 @@ model WebhookEvent {
   id          String    @id @default(cuid())
   eventId     String    @unique // Meta webhook event ID or hash for idempotency
   eventType   String    // comments, mentions, etc.
+  commentId   String?   @unique // Unique constraint on comment ID to deduplicate incoming webhook events
   rawPayload  String    @db.Text
   signature   String?
   isProcessed Boolean   @default(false)
@@ -162,32 +194,47 @@ model WebhookEvent {
   createdAt   DateTime  @default(now())
 
   @@index([eventId])
+  @@index([commentId])
   @@index([isProcessed])
 }
 
 model PromptRequest {
-  id                String         @id @default(cuid())
-  incomingCommentId String         @unique // Unique Instagram comment ID to guarantee 1 delivery per comment
-  instagramMediaId  String
-  commenterId       String?        // Instagram Scoped ID (IGSID)
-  commentText       String?        @db.Text
-  matchedPostId     String?
-  matchedPost       Post?          @relation(fields: [matchedPostId], references: [id], onDelete: SetNull)
-  matchedPromptId   String?
-  matchedPrompt     Prompt?        @relation(fields: [matchedPromptId], references: [id], onDelete: SetNull)
-  deliveryStatus    DeliveryStatus @default(PENDING)
-  deliveryMethod    String         @default("PRIVATE_REPLY") // PRIVATE_REPLY, DIRECT_MESSAGE
-  privateReplyId    String?        // ID returned by Meta upon sending private reply
-  retryCount        Int            @default(0)
-  errorMessage      String?        @db.Text
-  deliveredAt       DateTime?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id                    String              @id @default(cuid())
+  postId                String
+  post                  Post                @relation(fields: [postId], references: [id], onDelete: Cascade)
+  instagramAccountId    String?
+  instagramScopedUserId String              // Stable Instagram-scoped commenter ID (IGSID)
+  firstCommentId        String              // First qualifying comment ID
+  firstCommentTimestamp DateTime?
+  deliveryStatus        DMReservationStatus @default(RESERVED)
+  reservedAt            DateTime            @default(now())
+  sendingAt             DateTime?
+  sentAt                DateTime?
+  metaMessageId         String?             // Meta message ID returned upon successful private reply
+  attemptCount          Int                 @default(0)
+  lastError             String?             @db.Text
 
-  @@index([incomingCommentId])
-  @@index([instagramMediaId])
+  matchedPromptId       String?
+  matchedPrompt         Prompt?             @relation(fields: [matchedPromptId], references: [id], onDelete: SetNull)
+  commentText           String?             @db.Text
+
+  // Backward compatibility fields
+  incomingCommentId     String?             // Alias to firstCommentId
+  instagramMediaId      String?
+  deliveryMethod        String              @default("PRIVATE_REPLY")
+  privateReplyId        String?             // Alias to metaMessageId
+  retryCount            Int                 @default(0)
+  errorMessage          String?             @db.Text
+  deliveredAt           DateTime?
+
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  // STRICT IDEMPOTENCY: Exactly one automated reply reservation per user per post!
+  @@unique([postId, instagramScopedUserId])
+  @@index([instagramScopedUserId])
   @@index([deliveryStatus])
-  @@index([matchedPostId])
+  @@index([postId])
   @@index([createdAt])
 }
 

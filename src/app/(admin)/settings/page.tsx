@@ -6,18 +6,16 @@ import {
   Settings,
   Radio,
   CheckCircle2,
-  AlertTriangle,
-  Sparkles,
   Save,
-  ExternalLink,
-  ShieldCheck,
   RefreshCw,
   Server,
-  Key,
-  Clock,
   Info,
+  Key,
+  ShieldCheck,
+  AlertCircle,
+  Trash2,
+  ExternalLink,
 } from "lucide-react";
-import type { AutomationSettingItem } from "@/types";
 
 interface HealthCheckData {
   services: {
@@ -29,12 +27,33 @@ interface HealthCheckData {
   };
 }
 
+interface InstagramStatusData {
+  metaConfigured: boolean;
+  appId: string | null;
+  hasSecret: boolean;
+  webhookVerifyToken: string;
+  account: {
+    isConnected: boolean;
+    username: string | null;
+    name: string | null;
+    igUserId: string | null;
+    profilePictureUrl: string | null;
+    permissions: string | null;
+  };
+}
+
 export default function SettingsPage() {
   const [health, setHealth] = useState<HealthCheckData | null>(null);
-  const [settings, setSettings] = useState<AutomationSettingItem | null>(null);
+  const [instagramStatus, setInstagramStatus] = useState<InstagramStatusData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Direct token connect state
+  const [tokenInput, setTokenInput] = useState("");
+  const [connectingToken, setConnectingToken] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [tokenSuccess, setTokenSuccess] = useState<string | null>(null);
 
   // Form states
   const [isAutomationEnabled, setIsAutomationEnabled] = useState(true);
@@ -44,26 +63,8 @@ export default function SettingsPage() {
   );
   const [retentionHours, setRetentionHours] = useState(24);
 
-  const [igStatus, setIgStatus] = useState<{
-    success: boolean;
-    metaConfigured: boolean;
-    appId: string | null;
-    hasSecret: boolean;
-    account: {
-      id: string;
-      isConnected: boolean;
-      username: string;
-      name: string | null;
-      igUserId: string;
-      profilePictureUrl: string | null;
-      tokenExpiresAt: string | null;
-    } | null;
-  } | null>(null);
-  const [disconnecting, setDisconnecting] = useState(false);
-
   const fetchStatusAndSettings = async () => {
     try {
-      setLoading(true);
       const [healthRes, settingsRes, igStatusRes] = await Promise.all([
         fetch("/api/system/health"),
         fetch("/api/automation/settings"),
@@ -72,18 +73,15 @@ export default function SettingsPage() {
 
       const healthJson = await healthRes.json();
       const settingsJson = await settingsRes.json();
-      const igStatusJson = await igStatusRes.json();
+      const igJson = await igStatusRes.json();
 
       if (healthJson.services) setHealth(healthJson);
+      if (igJson.success) setInstagramStatus(igJson);
       if (settingsJson.data) {
-        setSettings(settingsJson.data);
         setIsAutomationEnabled(settingsJson.data.isAutomationEnabled);
         setGlobalKeyword(settingsJson.data.globalKeyword);
         setReplyTemplate(settingsJson.data.replyTemplate);
         setRetentionHours(settingsJson.data.retentionHours);
-      }
-      if (igStatusJson.success) {
-        setIgStatus(igStatusJson);
       }
     } catch {
       // Fallback
@@ -92,19 +90,45 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDisconnect = async () => {
+  const handleConnectToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenInput.trim()) return;
+
+    try {
+      setConnectingToken(true);
+      setTokenError(null);
+      setTokenSuccess(null);
+
+      const res = await fetch("/api/instagram/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenInput.trim() }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || json.error) {
+        throw new Error(json.error || "Token verification failed");
+      }
+
+      setTokenSuccess(json.message || "Account connected successfully!");
+      setTokenInput("");
+      await fetchStatusAndSettings();
+    } catch (err: unknown) {
+      setTokenError(err instanceof Error ? err.message : "Failed to connect token");
+    } finally {
+      setConnectingToken(false);
+    }
+  };
+
+  const handleDisconnectInstagram = async () => {
     if (!confirm("Are you sure you want to disconnect this Instagram account?")) return;
     try {
-      setDisconnecting(true);
       const res = await fetch("/api/instagram/disconnect", { method: "POST" });
-      const json = await res.json();
-      if (json.success) {
+      if (res.ok) {
         await fetchStatusAndSettings();
       }
-    } catch (err) {
-      console.error("Disconnect error:", err);
-    } finally {
-      setDisconnecting(false);
+    } catch {
+      // ignore
     }
   };
 
@@ -269,57 +293,157 @@ export default function SettingsPage() {
               <Radio className="w-4 h-4 text-amber-500" />
               <span>Official Meta Instagram Professional Integration</span>
             </h2>
-            <span className="text-[11px] text-slate-400 font-mono">
-              Graph API v21.0
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400 font-mono">
+                Graph API v21.0
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-medium ${
+                  instagramStatus?.account.isConnected
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                }`}
+              >
+                {instagramStatus?.account.isConnected ? "CONNECTED" : "DISCONNECTED"}
+              </span>
+            </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#0e1014] border border-[#1f232d] space-y-4 text-xs">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold text-slate-200">Account Connection Status</p>
-                  {igStatus?.account?.isConnected ? (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      CONNECTED
-                    </span>
+          <div className="p-4 rounded-xl bg-[#0e1014] border border-[#1f232d] space-y-5 text-xs">
+            {/* Account Status / Active Account Card */}
+            {instagramStatus?.account.isConnected ? (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-lg bg-[#141720] border border-emerald-500/20">
+                <div className="flex items-center gap-3">
+                  {instagramStatus.account.profilePictureUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={instagramStatus.account.profilePictureUrl}
+                      alt={instagramStatus.account.username || "Instagram Account"}
+                      className="w-12 h-12 rounded-full border-2 border-emerald-500/40 object-cover"
+                    />
                   ) : (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                      DISCONNECTED
-                    </span>
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">
+                      IG
+                    </div>
                   )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-white">
+                        {instagramStatus.account.name || instagramStatus.account.username}
+                      </span>
+                      <span className="text-emerald-400 text-xs font-mono">
+                        @{instagramStatus.account.username}
+                      </span>
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      Instagram Account ID: <span className="text-slate-200">{instagramStatus.account.igUserId}</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
+                        instagram_content_publish
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
+                        instagram_manage_comments
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
+                        private_replies
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                {igStatus?.account?.isConnected ? (
-                  <p className="text-[11px] text-slate-300 mt-1">
-                    Connected to <strong className="text-amber-400">@{igStatus.account.username}</strong>
-                    {igStatus.account.name ? ` (${igStatus.account.name})` : ""} &bull; IG User ID: <code className="text-slate-400">{igStatus.account.igUserId}</code>
-                  </p>
-                ) : (
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`https://instagram.com/${instagramStatus.account.username}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a1e29] hover:bg-[#222736] text-slate-200 text-xs transition-colors"
+                  >
+                    <span>View Profile</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                  <button
+                    onClick={handleDisconnectInstagram}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Disconnect</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-200">No Instagram Account Connected</p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     Requires an Instagram Professional account (Business or Creator) linked to a Facebook Page.
                   </p>
-                )}
-              </div>
+                </div>
 
-              {igStatus?.account?.isConnected ? (
-                <button
-                  type="button"
-                  onClick={handleDisconnect}
-                  disabled={disconnecting}
-                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-all disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${disconnecting ? "animate-spin" : ""}`} />
-                  <span>{disconnecting ? "Disconnecting..." : "Disconnect Account"}</span>
-                </button>
-              ) : (
                 <a
                   href="/api/instagram/auth"
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black text-xs font-semibold transition-all hover:scale-[1.02]"
                 >
                   <Radio className="w-4 h-4" />
-                  <span>Connect Instagram Account</span>
+                  <span>Connect Via OAuth</span>
                 </a>
-              )}
+              </div>
+            )}
+
+            {/* Direct Access Token Connect / Refresh Form */}
+            <div className="p-4 rounded-lg bg-[#141720] border border-[#212634] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-amber-400" />
+                  <span className="font-semibold text-slate-200">Direct Access Token Connection / Refresh</span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  AES-256-GCM Encrypted
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Paste a User or Page Access Token from Meta Graph API Explorer or Token Debugger to connect or refresh your credentials directly.
+              </p>
+
+              <form onSubmit={handleConnectToken} className="space-y-2">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="Paste Meta User or Page Access Token (EAAM...)"
+                    className="flex-1 px-3.5 py-2 bg-[#0e1014] border border-[#232836] rounded-lg text-xs text-amber-300 font-mono focus:border-amber-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={connectingToken || !tokenInput.trim()}
+                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-black font-semibold text-xs flex items-center justify-center gap-2 transition-all"
+                  >
+                    {connectingToken ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                    )}
+                    <span>Verify & Connect</span>
+                  </button>
+                </div>
+
+                {tokenSuccess && (
+                  <p className="text-emerald-400 text-xs flex items-center gap-1.5 mt-1 font-mono">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{tokenSuccess}</span>
+                  </p>
+                )}
+                {tokenError && (
+                  <p className="text-rose-400 text-xs flex items-center gap-1.5 mt-1 font-mono">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>{tokenError}</span>
+                  </p>
+                )}
+              </form>
             </div>
 
             {/* Webhook Configuration Details */}

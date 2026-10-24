@@ -6,9 +6,32 @@ export type PostStatus =
   | "FAILED"
   | "CANCELLED";
 
-export type DeliveryStatus = "PENDING" | "DELIVERED" | "FAILED" | "IGNORED";
+export type ImageLifecycleStatus =
+  | "UPLOADED"
+  | "READY_TO_PUBLISH"
+  | "PUBLISHING"
+  | "PUBLISHED"
+  | "CLEANUP_PENDING"
+  | "DELETED"
+  | "CLEANUP_FAILED";
 
-export type JobType = "PUBLISH_POST" | "CLEANUP_TEMP_ASSETS" | "RETRY_PRIVATE_REPLY";
+export type DMReservationStatus =
+  | "RESERVED"
+  | "SENDING"
+  | "SENT"
+  | "FAILED"
+  | "UNKNOWN"
+  | "SUPPRESSED";
+
+export type DeliveryStatus = DMReservationStatus | "DELIVERED" | "IGNORED";
+
+export type JobType =
+  | "PUBLISH_POST"
+  | "RECONCILE_PUBLICATION"
+  | "CLEANUP_BLOB"
+  | "CLEANUP_TEMP_ASSETS"
+  | "DELIVER_INSTAGRAM_DM"
+  | "RETRY_PRIVATE_REPLY";
 
 export type JobStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
@@ -48,13 +71,24 @@ export interface PostItem {
   hashtags: string;
   commentKeyword: string;
   mediaType: string;
+  blobUrl?: string | null;
+  blobPathname?: string | null;
   temporaryImageUrl?: string | null;
   temporaryAssetKey?: string | null;
+  imageUploadedAt?: string | null;
+  imageLifecycleStatus?: ImageLifecycleStatus;
+  imageDeletedAt?: string | null;
+  cleanupAttempts?: number;
+  lastCleanupError?: string | null;
+  containerId?: string | null;
   instagramMediaId?: string | null;
   instagramPermalink?: string | null;
   status: PostStatus;
   scheduledFor?: string | null;
   publishedAt?: string | null;
+  publicationAttempts?: number;
+  lastPublishError?: string | null;
+  reconciliationMetadata?: string | null;
   errorMessage?: string | null;
   retryCount: number;
   createdAt: string;
@@ -67,8 +101,6 @@ export interface InstagramAccountItem {
   username: string;
   name?: string | null;
   profilePictureUrl?: string | null;
-  accessTokenEncrypted?: string;
-  tokenExpiresAt?: string | null;
   isConnected: boolean;
   permissions?: string | null;
   createdAt: string;
@@ -77,19 +109,28 @@ export interface InstagramAccountItem {
 
 export interface PromptRequestItem {
   id: string;
-  incomingCommentId: string;
-  instagramMediaId: string;
-  commenterId?: string | null;
-  commentText?: string | null;
+  postId?: string | null;
   matchedPostId?: string | null;
   matchedPost?: PostItem | null;
+  instagramScopedUserId?: string | null;
+  commenterId?: string | null;
+  firstCommentId?: string | null;
+  incomingCommentId?: string | null;
+  instagramMediaId?: string | null;
+  commentText?: string | null;
   matchedPromptId?: string | null;
   matchedPrompt?: PromptItem | null;
   deliveryStatus: DeliveryStatus;
-  deliveryMethod: string;
+  deliveryMethod?: string;
+  metaMessageId?: string | null;
   privateReplyId?: string | null;
-  retryCount: number;
+  attemptCount?: number;
+  retryCount?: number;
+  lastError?: string | null;
   errorMessage?: string | null;
+  reservedAt?: string | null;
+  sendingAt?: string | null;
+  sentAt?: string | null;
   deliveredAt?: string | null;
   createdAt: string;
 }

@@ -14,6 +14,9 @@ import {
   Plus,
   RefreshCw,
   XCircle,
+  Trash2,
+  RotateCcw,
+  Layers,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { PostItem } from "@/types";
@@ -23,6 +26,8 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("ALL");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [cleanupActionLoadingId, setCleanupActionLoadingId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fetchPosts = async () => {
     try {
@@ -43,36 +48,70 @@ export default function CalendarPage() {
     fetchPosts();
   }, []);
 
-  const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
   const handlePublishNow = async (id: string) => {
     try {
       setActionLoadingId(id);
       setStatusMessage(null);
       const res = await fetch(`/api/posts/${id}/publish`, { method: "POST" });
       const json = await res.json();
-      if (!res.ok || json.error) {
-        throw new Error(json.error || "Publication failed");
+      if (res.ok && json.success) {
+        setStatusMessage({
+          type: "success",
+          text: `Post published successfully! Media ID: ${json.data?.instagramMediaId || "confirmed"}`,
+        });
+        await fetchPosts();
+      } else {
+        setStatusMessage({
+          type: "error",
+          text: json.error || "Failed to publish post.",
+        });
       }
-      setStatusMessage({ type: "success", text: `Published to Instagram successfully! (Media ID: ${json.data?.instagramMediaId})` });
-      fetchPosts();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Publication error";
+      const msg = err instanceof Error ? err.message : "Network error publishing post";
       setStatusMessage({ type: "error", text: msg });
     } finally {
       setActionLoadingId(null);
     }
   };
 
+  const handleRetryCleanup = async (id: string) => {
+    try {
+      setCleanupActionLoadingId(id);
+      setStatusMessage(null);
+      const res = await fetch(`/api/posts/${id}/cleanup-retry`, { method: "POST" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setStatusMessage({
+          type: "success",
+          text: json.alreadyDeleted
+            ? "Temporary image was already removed from Vercel Blob."
+            : "Vercel Blob temporary image cleaned up successfully.",
+        });
+        await fetchPosts();
+      } else {
+        setStatusMessage({
+          type: "error",
+          text: json.error || "Failed to retry cleanup.",
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error executing cleanup retry";
+      setStatusMessage({ type: "error", text: msg });
+    } finally {
+      setCleanupActionLoadingId(null);
+    }
+  };
+
   const handleCancelScheduled = async (id: string) => {
     try {
       setActionLoadingId(id);
+      setStatusMessage(null);
       await fetch(`/api/posts`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status: "DRAFT" }),
       });
-      fetchPosts();
+      await fetchPosts();
     } catch {
       // handle error
     } finally {
@@ -85,13 +124,20 @@ export default function CalendarPage() {
     return p.status === filter;
   });
 
-  const getStatusBadge = (status: string) => {
+  const getPublicationBadge = (status: string) => {
     switch (status) {
       case "PUBLISHED":
         return (
           <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3" />
             <span>PUBLISHED</span>
+          </span>
+        );
+      case "PUBLISHING":
+        return (
+          <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            <span>PUBLISHING</span>
           </span>
         );
       case "SCHEDULED":
@@ -118,15 +164,61 @@ export default function CalendarPage() {
     }
   };
 
+  const getLifecycleBadge = (lifecycle?: string) => {
+    switch (lifecycle) {
+      case "DELETED":
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3" />
+            <span>BLOB: PURGED</span>
+          </span>
+        );
+      case "CLEANUP_PENDING":
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
+            <Clock className="w-3 h-3 animate-pulse" />
+            <span>CLEANUP PENDING</span>
+          </span>
+        );
+      case "CLEANUP_FAILED":
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1">
+            <Trash2 className="w-3 h-3" />
+            <span>CLEANUP FAILED</span>
+          </span>
+        );
+      case "PUBLISHING":
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            <span>PUBLISHING</span>
+          </span>
+        );
+      case "READY_TO_PUBLISH":
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center gap-1">
+            <Layers className="w-3 h-3" />
+            <span>READY TO PUBLISH</span>
+          </span>
+        );
+      default:
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20 flex items-center gap-1">
+            <span>TEMP: UPLOADED</span>
+          </span>
+        );
+    }
+  };
+
   return (
     <AdminShell
       title="Publishing Calendar"
-      subtitle="Track scheduled publication queue, live Instagram posts, and drafts"
+      subtitle="Track scheduled publication queue, live Instagram posts, drafts, and temporary Vercel Blob lifecycle"
     >
       <div className="space-y-6">
         {statusMessage && (
           <div
-            className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+            className={`p-3.5 rounded-xl border flex items-center justify-between text-xs transition-all ${
               statusMessage.type === "success"
                 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
                 : "bg-rose-500/10 border-rose-500/30 text-rose-300"
@@ -140,6 +232,12 @@ export default function CalendarPage() {
               )}
               <span>{statusMessage.text}</span>
             </div>
+            <button
+              onClick={() => setStatusMessage(null)}
+              className="text-slate-400 hover:text-white ml-2 text-xs"
+            >
+              &times;
+            </button>
           </div>
         )}
 
@@ -207,10 +305,10 @@ export default function CalendarPage() {
                 {/* Left: Thumbnail & Content */}
                 <div className="flex items-start gap-4 flex-1 min-w-0">
                   <div className="w-16 h-16 rounded-lg bg-[#171b24] border border-[#262c3a] overflow-hidden flex-shrink-0 flex items-center justify-center">
-                    {post.temporaryImageUrl ? (
+                    {post.temporaryImageUrl || post.blobUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={post.temporaryImageUrl}
+                        src={post.temporaryImageUrl || post.blobUrl || ""}
                         alt="Post media"
                         className="w-full h-full object-cover"
                       />
@@ -221,7 +319,8 @@ export default function CalendarPage() {
 
                   <div className="space-y-1 min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      {getStatusBadge(post.status)}
+                      {getPublicationBadge(post.status)}
+                      {getLifecycleBadge(post.imageLifecycleStatus)}
                       <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold">
                         KEYWORD: {post.commentKeyword}
                       </span>
@@ -236,7 +335,7 @@ export default function CalendarPage() {
                       {post.caption}
                     </p>
 
-                    <div className="flex items-center gap-4 text-[11px] text-slate-500 font-mono pt-1">
+                    <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 font-mono pt-1">
                       {post.status === "SCHEDULED" && post.scheduledFor && (
                         <span className="flex items-center gap-1 text-sky-400">
                           <Clock className="w-3.5 h-3.5" />
@@ -252,7 +351,21 @@ export default function CalendarPage() {
                       {post.instagramMediaId && (
                         <span>Media ID: {post.instagramMediaId}</span>
                       )}
+                      {post.cleanupAttempts ? (
+                        <span>Cleanup attempts: {post.cleanupAttempts}</span>
+                      ) : null}
                     </div>
+
+                    {post.lastCleanupError && (
+                      <p className="text-[11px] text-rose-400 font-mono">
+                        Cleanup Error: {post.lastCleanupError}
+                      </p>
+                    )}
+                    {post.lastPublishError && (
+                      <p className="text-[11px] text-rose-400 font-mono">
+                        Publish Error: {post.lastPublishError}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -268,6 +381,20 @@ export default function CalendarPage() {
                       <span>View on Instagram</span>
                       <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
                     </a>
+                  )}
+
+                  {post.imageLifecycleStatus === "CLEANUP_FAILED" && (
+                    <button
+                      onClick={() => handleRetryCleanup(post.id)}
+                      disabled={cleanupActionLoadingId === post.id}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-medium transition-colors disabled:opacity-50"
+                      title="Retry temporary Vercel Blob deletion"
+                    >
+                      <RotateCcw
+                        className={`w-3.5 h-3.5 ${cleanupActionLoadingId === post.id ? "animate-spin" : ""}`}
+                      />
+                      <span>Retry Cleanup</span>
+                    </button>
                   )}
 
                   {post.status === "SCHEDULED" && (

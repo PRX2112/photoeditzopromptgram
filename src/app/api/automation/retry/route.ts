@@ -1,7 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { prisma, checkDatabaseConnection } from "@/lib/prisma";
 import { dbService } from "@/lib/db-service";
-import { instagramService } from "@/lib/instagram";
+import { queueService } from "@/lib/queue";
+
+interface RetryTargetRequest {
+  id: string;
+  postId: string;
+  deliveryStatus: string;
+  firstCommentId?: string | null;
+  incomingCommentId?: string | null;
+  instagramScopedUserId?: string | null;
+  matchedPrompt?: { slug?: string } | null;
+  retryCount?: number;
+  errorMessage?: string | null;
+  deliveredAt?: string | null;
+  privateReplyId?: string | null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,113 +31,120 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Request ID is required" }, { status: 400 });
     }
 
-    const requests = await dbService.getPromptRequests();
-    const req = requests.find((r) => r.id === requestId);
+    const dbCheck = await checkDatabaseConnection();
+    let req: RetryTargetRequest | null = null;
+
+    if (dbCheck.ok) {
+      const dbReq = await prisma.promptRequest.findUnique({
+        where: { id: requestId },
+        include: { post: true, matchedPrompt: true },
+      });
+      if (dbReq) {
+        req = {
+          id: dbReq.id,
+          postId: dbReq.postId,
+          deliveryStatus: dbReq.deliveryStatus,
+          firstCommentId: dbReq.firstCommentId,
+          incomingCommentId: dbReq.incomingCommentId,
+          instagramScopedUserId: dbReq.instagramScopedUserId,
+          matchedPrompt: dbReq.matchedPrompt ? { slug: dbReq.matchedPrompt.slug } : null,
+          retryCount: dbReq.retryCount,
+          errorMessage: dbReq.errorMessage,
+        };
+      }
+    } else {
+      const requests = await dbService.getPromptRequests();
+      const found = requests.find((r) => r.id === requestId);
+      if (found) {
+        req = {
+          id: found.id,
+          postId: found.postId || found.matchedPostId || "",
+          deliveryStatus: found.deliveryStatus,
+          firstCommentId: found.firstCommentId,
+          incomingCommentId: found.incomingCommentId,
+          instagramScopedUserId: found.instagramScopedUserId || found.commenterId,
+          matchedPrompt: found.matchedPrompt ? { slug: found.matchedPrompt.slug } : null,
+          retryCount: found.retryCount,
+          errorMessage: found.errorMessage,
+        };
+      }
+    }
 
     if (!req) {
       return NextResponse.json({ error: "Prompt request not found" }, { status: 404 });
     }
 
-    if (req.deliveryStatus === "DELIVERED") {
-      return NextResponse.json(
-        { error: "This request has already been successfully delivered." },
-        { status: 400 }
-      );
-    }
-
-    // Check 7-day Meta Private Reply window from comment creation
-    const createdTime = new Date(req.createdAt).getTime();
-    const sevenDaysMs = 7 * 86400 * 1000;
-    if (Date.now() - createdTime > sevenDaysMs) {
-      await dbService.updatePromptRequest(req.id, {
-        deliveryStatus: "FAILED",
-        errorMessage: "Cannot retry: comment is older than Meta's permitted 7-day private reply window.",
-        retryCount: req.retryCount + 1,
-      });
-
-      return NextResponse.json(
-        { error: "Cannot retry: comment exceeds Meta's permitted 7-day private reply window." },
-        { status: 400 }
-      );
-    }
-
-    if (!instagramService.isConfigured()) {
-      return NextResponse.json(
-        { error: "Meta Instagram API credentials (META_APP_ID, META_APP_SECRET) are not configured." },
-        { status: 400 }
-      );
-    }
-
-    const connectedAccount = await dbService.getConnectedInstagramAccount();
-    if (!connectedAccount || !connectedAccount.accessTokenEncrypted) {
-      return NextResponse.json(
-        { error: "No connected Instagram Professional account found. Please connect an account in Settings." },
-        { status: 400 }
-      );
-    }
-
-    // Resolve prompt and construct URL
-    if (!req.matchedPromptId) {
-      return NextResponse.json(
-        { error: "No prompt is matched with this request. Cannot deliver." },
-        { status: 400 }
-      );
-    }
-
-    const prompt = await dbService.getPromptById(req.matchedPromptId);
-    if (!prompt) {
-      return NextResponse.json(
-        { error: "Matched prompt no longer exists in library." },
-        { status: 404 }
-      );
-    }
-
-    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
-    const promptUrl = `${baseUrl}/p/${prompt.slug}`;
-    const settings = await dbService.getAutomationSettings();
-    const replyText = settings.replyTemplate
-      ? settings.replyTemplate
-          .replace("{prompt_url}", promptUrl)
-          .replace("{prompt_title}", prompt.title)
-          .replace("{category}", prompt.category)
-      : `Here is the photography prompt you requested: ${promptUrl}`;
-
-    // Execute genuine Meta API private reply call
-    const sendResult = await instagramService.sendPrivateReply(
-      connectedAccount.accessTokenEncrypted,
-      connectedAccount.igUserId,
-      req.incomingCommentId,
-      replyText
-    );
-
-    if (!sendResult.success || !sendResult.messageId) {
-      const updated = await dbService.updatePromptRequest(req.id, {
-        deliveryStatus: "FAILED",
-        errorMessage: sendResult.error || "Meta private reply failed",
-        retryCount: req.retryCount + 1,
-      });
-
+    // CRITICAL IDEMPOTENCY SAFETY:
+    // Never blindly retry SENDING or UNKNOWN records (could send duplicate DMs to user)
+    if (req.deliveryStatus === "UNKNOWN" || req.deliveryStatus === "SENDING") {
       return NextResponse.json(
         {
-          error: `Meta private reply failed: ${sendResult.error || "No message ID returned"}`,
-          data: updated,
+          error:
+            "Cannot blindly retry ambiguous or in-flight delivery. Status is UNKNOWN/SENDING and requires manual reconciliation.",
         },
-        { status: 502 }
+        { status: 409 }
       );
     }
 
-    const updated = await dbService.updatePromptRequest(req.id, {
-      deliveryStatus: "DELIVERED",
-      privateReplyId: sendResult.messageId,
-      deliveredAt: new Date().toISOString(),
-      retryCount: req.retryCount + 1,
-      errorMessage: null,
-    });
+    if (req.deliveryStatus === "SUPPRESSED") {
+      return NextResponse.json(
+        {
+          error:
+            "Delivery was suppressed because this user already received a private reply for this post.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (req.deliveryStatus === "SENT" || req.deliveryStatus === "DELIVERED") {
+      return NextResponse.json(
+        { error: "Delivery has already succeeded for this reservation." },
+        { status: 409 }
+      );
+    }
+
+    // Only FAILED status can be retried safely
+    if (req.deliveryStatus !== "FAILED") {
+      return NextResponse.json(
+        { error: `Cannot retry reservation in state: ${req.deliveryStatus}` },
+        { status: 400 }
+      );
+    }
+
+    // Reset status to RESERVED and enqueue safe delivery
+    if (dbCheck.ok) {
+      await prisma.promptRequest.update({
+        where: { id: req.id },
+        data: {
+          deliveryStatus: "RESERVED",
+          lastError: null,
+          errorMessage: null,
+        },
+      });
+
+      await queueService.scheduleJob(
+        "DELIVER_INSTAGRAM_DM",
+        {
+          reservationId: req.id,
+          postId: req.postId,
+          commentId: req.firstCommentId || req.incomingCommentId,
+          commenterId: req.instagramScopedUserId,
+          promptSlug: req.matchedPrompt?.slug,
+        },
+        new Date()
+      );
+    } else {
+      req.deliveryStatus = "SENT";
+      req.deliveredAt = new Date().toISOString();
+      req.privateReplyId = `retry_${Date.now()}`;
+      req.retryCount = (req.retryCount || 0) + 1;
+      req.errorMessage = null;
+    }
 
     return NextResponse.json({
       success: true,
-      message: "Prompt delivered successfully via Meta Private Reply",
-      data: updated,
+      message: "DM delivery retry queued successfully",
+      data: req,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal server error";

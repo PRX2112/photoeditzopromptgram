@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { storageService } from "@/lib/storage";
+import { vercelBlobService } from "@/lib/storage/vercel-blob";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,41 +16,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No image file provided" }, { status: 400 });
     }
 
-    // Validate mime type
-    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
-    if (!validTypes.includes(file.type)) {
-      return NextResponse.json(
-        { error: "Invalid image format. Supported formats: JPEG, PNG, WEBP." },
-        { status: 400 }
-      );
-    }
-
-    // Max size: 8MB
-    if (file.size > 8 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: "Image file exceeds maximum permitted size of 8MB." },
-        { status: 400 }
-      );
-    }
-
+    // Convert file to buffer for magic-byte content inspection
     const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await storageService.uploadTemporaryAsset(
+
+    // Upload to Vercel Blob with magic byte validation and size check
+    const blobResult = await vercelBlobService.uploadTemporaryImage(
       buffer,
       file.name,
-      file.type,
-      24 // 24 hours temporary retention
+      file.type
     );
 
     return NextResponse.json({
       success: true,
-      publicUrl: result.publicUrl,
-      assetKey: result.assetKey,
-      filename: file.name,
-      size: file.size,
-      expiresAt: result.expiresAt.toISOString(),
+      publicUrl: blobResult.url,
+      blobUrl: blobResult.url,
+      pathname: blobResult.pathname,
+      size: blobResult.size,
+      contentType: blobResult.contentType,
+      isVercelBlob: vercelBlobService.isConfigured(),
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

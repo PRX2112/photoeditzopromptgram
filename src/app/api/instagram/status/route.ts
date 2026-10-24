@@ -14,7 +14,6 @@ export async function GET() {
     const appId = process.env.META_APP_ID || "";
     const hasSecret = Boolean(process.env.META_APP_SECRET && process.env.META_APP_SECRET.length > 0);
     const webhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN || "";
-
     const connectedAccount = await dbService.getConnectedInstagramAccount();
 
     return NextResponse.json({
@@ -23,17 +22,14 @@ export async function GET() {
       appId: appId ? `${appId.slice(0, 4)}...${appId.slice(-4)}` : null,
       hasSecret,
       webhookVerifyToken: webhookVerifyToken ? "Configured" : "Missing",
-      account: connectedAccount
-        ? {
-            id: connectedAccount.id,
-            isConnected: connectedAccount.isConnected,
-            username: connectedAccount.username,
-            name: connectedAccount.name,
-            igUserId: connectedAccount.igUserId,
-            profilePictureUrl: connectedAccount.profilePictureUrl,
-            tokenExpiresAt: connectedAccount.tokenExpiresAt,
-          }
-        : null,
+      account: {
+        isConnected: Boolean(connectedAccount?.isConnected),
+        username: connectedAccount?.username || null,
+        name: connectedAccount?.name || null,
+        igUserId: connectedAccount?.igUserId || null,
+        profilePictureUrl: connectedAccount?.profilePictureUrl || null,
+        permissions: connectedAccount?.permissions || null,
+      },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal server error";

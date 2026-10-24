@@ -1,0 +1,10 @@
+photoeditzopromptgram-----------------------------------------------
+
+npm i -g neon@latest && neon login && neon skills -y && neon mcp -y && neon link --project-id icy-recipe-44631227 --branch production -y
+
+postgresql://neondb_owner:npg_35otbHhNuecp@ep-wandering-band-b4fe2o5y-pooler.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+
+BLOB_READ_WRITE_TOKEN="vercel_blob_rw_OCpZLZJKe8F1bYJv_CJzZXlJfJjjO4iLGpTsUkXrOFUNpXM"
+
+
+temp test -- EAAMeEUGvUZBkBS2PcgLg2IBCLGX7TibfEk35Wb7rMutZA7Y5qJYVYzDNErkltyn459wZB3TFWvRijXVXPdhH7CCIibNZByAoVRoxtF3BnLtZBNSpUM4QEBMmm0Dc6h58Eba5BU2I7d0eplexx5EZBcfe8jEyWW6EASMIhNljr15thFEaaI2reZCypCX3fxjLRiREUzBZB3U86ZCIq

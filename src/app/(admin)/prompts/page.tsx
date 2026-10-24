@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { AdminShell } from "@/components/layout/AdminShell";
 import {
   Search,
@@ -16,13 +15,11 @@ import {
   Send,
   Sparkles,
   Eye,
-  SlidersHorizontal,
 } from "lucide-react";
 import { PHOTOGRAPHY_CATEGORIES } from "@/lib/utils";
 import type { PromptItem } from "@/types";
 
 export default function PromptsPage() {
-  const router = useRouter();
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

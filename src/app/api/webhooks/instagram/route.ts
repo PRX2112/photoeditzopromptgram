@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Process event asynchronously or synchronously
-    const results = await webhookProcessor.processWebhookEvent(payload);
+    const results = await webhookProcessor.processWebhookEvent(payload, signature);
 
     return NextResponse.json({
       status: "success",
