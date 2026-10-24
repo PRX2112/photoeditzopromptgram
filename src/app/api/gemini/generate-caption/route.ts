@@ -5,7 +5,7 @@ import { z } from "zod";
 
 const InputSchema = z.object({
   originalPrompt: z.string().min(5, "Original prompt is required"),
-  category: z.string().min(1, "Category is required"),
+  category: z.string().optional(),
   imageTitle: z.string().optional(),
   commentKeyword: z.string().min(1, "Comment keyword is required"),
   captionStyle: z.enum(["editorial", "storytelling", "minimalist", "technical"]).optional(),

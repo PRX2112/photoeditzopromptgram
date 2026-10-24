@@ -15,15 +15,28 @@ import {
   Send,
   Sparkles,
   Eye,
+  ImageIcon,
 } from "lucide-react";
 import { PHOTOGRAPHY_CATEGORIES } from "@/lib/utils";
 import type { PromptItem } from "@/types";
+
+const STATUS_FILTERS = [
+  "all",
+  "Available",
+  "Draft in progress",
+  "Scheduled",
+  "Published",
+  "Publication failed",
+  "Image cleanup pending",
+  "Image cleanup failed",
+] as const;
 
 export default function PromptsPage() {
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [showArchived, setShowArchived] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -32,6 +45,7 @@ export default function PromptsPage() {
       setLoading(true);
       const params = new URLSearchParams();
       if (selectedCategory !== "all") params.append("category", selectedCategory);
+      if (selectedStatus !== "all") params.append("status", selectedStatus);
       if (search) params.append("search", search);
       if (showArchived) params.append("includeArchived", "true");
 
@@ -49,7 +63,7 @@ export default function PromptsPage() {
 
   useEffect(() => {
     fetchPrompts();
-  }, [selectedCategory, showArchived]);
+  }, [selectedCategory, selectedStatus, showArchived]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +86,15 @@ export default function PromptsPage() {
           originalPrompt: prompt.originalPrompt,
           category: prompt.category,
           tags: prompt.tags,
-          generationSettings: prompt.generationSettings,
+          sourceImageUrl: prompt.sourceImageUrl || "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=80",
+          cameraModel: prompt.cameraModel,
+          lens: prompt.lens,
+          focalLength: prompt.focalLength,
+          aperture: prompt.aperture,
+          shutterSpeed: prompt.shutterSpeed,
+          iso: prompt.iso,
+          lightingSetup: prompt.lightingSetup,
+          renderingEngine: prompt.renderingEngine,
         }),
       });
       const data = await res.json();
@@ -99,10 +121,63 @@ export default function PromptsPage() {
     }
   };
 
+  const getStatusBadge = (status?: string) => {
+    switch (status) {
+      case "Available":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
+            ● Available
+          </span>
+        );
+      case "Draft in progress":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/25">
+            ✎ Draft in progress
+          </span>
+        );
+      case "Scheduled":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/25">
+            ⏱ Scheduled
+          </span>
+        );
+      case "Published":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/25">
+            ✓ Published
+          </span>
+        );
+      case "Publication failed":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/25">
+            ✕ Publication failed
+          </span>
+        );
+      case "Image cleanup pending":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/10 text-orange-400 border border-orange-500/25">
+            ⚡ Image cleanup pending
+          </span>
+        );
+      case "Image cleanup failed":
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/10 text-red-400 border border-red-500/25">
+            ⚠ Image cleanup failed
+          </span>
+        );
+      default:
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/25">
+            {status || "Available"}
+          </span>
+        );
+    }
+  };
+
   return (
     <AdminShell
       title="Prompt Library"
-      subtitle="Curate, search, and manage master photography generation prompts and public slugs"
+      subtitle="Curate master photography prompts, monitor lifecycle states, and prepare content for Instagram"
     >
       <div className="space-y-6">
         {/* Controls Bar: Search, Category Filter, and Add Button */}
@@ -126,7 +201,7 @@ export default function PromptsPage() {
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="pl-8 pr-4 py-2 bg-[#12141a] border border-[#222733] rounded-lg text-xs text-slate-200 appearance-none focus:border-amber-500 transition-colors cursor-pointer"
               >
-                <option value="all">All 10 Categories</option>
+                <option value="all">All Categories</option>
                 {PHOTOGRAPHY_CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
@@ -134,6 +209,21 @@ export default function PromptsPage() {
                 ))}
               </select>
               <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+
+            {/* Status Dropdown */}
+            <div className="relative">
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="pl-4 pr-4 py-2 bg-[#12141a] border border-[#222733] rounded-lg text-xs text-slate-200 appearance-none focus:border-amber-500 transition-colors cursor-pointer"
+              >
+                {STATUS_FILTERS.map((st) => (
+                  <option key={st} value={st}>
+                    {st === "all" ? "All Statuses" : st}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Archive Toggle */}
@@ -158,44 +248,13 @@ export default function PromptsPage() {
           </div>
         </div>
 
-        {/* Category Pills Bar */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none text-xs">
-          <button
-            onClick={() => setSelectedCategory("all")}
-            className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-colors ${
-              selectedCategory === "all"
-                ? "bg-amber-500 text-black font-semibold"
-                : "bg-[#141720] border border-[#222734] text-slate-400 hover:text-white"
-            }`}
-          >
-            All Categories ({prompts.length})
-          </button>
-          {PHOTOGRAPHY_CATEGORIES.map((cat) => {
-            const count = prompts.filter((p) => p.category === cat).length;
-            const isSelected = selectedCategory === cat;
-            return (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-colors ${
-                  isSelected
-                    ? "bg-amber-500 text-black font-semibold"
-                    : "bg-[#141720] border border-[#222734] text-slate-400 hover:text-white"
-                }`}
-              >
-                {cat} {count > 0 && <span className="opacity-70 ml-1">({count})</span>}
-              </button>
-            );
-          })}
-        </div>
-
         {/* Prompts Grid */}
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[1, 2, 3, 4].map((n) => (
               <div
                 key={n}
-                className="h-48 rounded-xl bg-[#111317] border border-[#21252e] animate-pulse"
+                className="h-64 rounded-xl bg-[#111317] border border-[#21252e] animate-pulse"
               />
             ))}
           </div>
@@ -204,7 +263,7 @@ export default function PromptsPage() {
             <Sparkles className="w-10 h-10 text-slate-600 mx-auto mb-3" />
             <h3 className="text-base font-semibold text-white">No Prompts Found</h3>
             <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-              No photography prompts matched your current search and category filters.
+              No photography prompts matched your current search and filters.
             </p>
             <div className="mt-4">
               <Link
@@ -226,11 +285,16 @@ export default function PromptsPage() {
                 } hover:border-[#303746] transition-all flex flex-col justify-between`}
               >
                 <div>
-                  {/* Card Header: Category & Public Link */}
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="px-2.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                      {prompt.category}
-                    </span>
+                  {/* Card Header: Category, Status Badge & View/Copy metrics */}
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {getStatusBadge(prompt.status)}
+                      {prompt.category && prompt.category !== "Uncategorized" && (
+                        <span className="px-2.5 py-0.5 rounded text-[10px] font-medium bg-[#191d27] text-slate-300 border border-[#262c3a]">
+                          {prompt.category}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-3 text-slate-500 text-[11px] font-mono">
                       <span className="flex items-center gap-1" title="Public views">
                         <Eye className="w-3.5 h-3.5 text-slate-400" />
@@ -243,10 +307,39 @@ export default function PromptsPage() {
                     </div>
                   </div>
 
-                  {/* Title */}
-                  <h3 className="text-sm font-semibold text-white mb-2 leading-snug">
-                    {prompt.title}
-                  </h3>
+                  {/* Image Preview & Title Layout */}
+                  <div className="flex gap-4 items-start mb-3">
+                    {prompt.sourceImageUrl ? (
+                      <div className="w-20 h-24 rounded-lg bg-[#0e1014] border border-[#212632] overflow-hidden shrink-0 relative group">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={prompt.sourceImageUrl}
+                          alt={prompt.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-20 h-24 rounded-lg bg-[#0e1014] border border-dashed border-[#212632] flex items-center justify-center shrink-0 text-slate-600">
+                        <ImageIcon className="w-6 h-6 opacity-40" />
+                      </div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-semibold text-white leading-snug line-clamp-2 mb-1.5">
+                        {prompt.title}
+                      </h3>
+                      {/* Public URL Slug */}
+                      <Link
+                        href={`/p/${prompt.slug}`}
+                        target="_blank"
+                        className="inline-flex items-center gap-1 text-[11px] text-amber-500/80 hover:text-amber-400 font-mono truncate max-w-full"
+                        title="View public follower page"
+                      >
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                        <span className="truncate">/p/{prompt.slug}</span>
+                      </Link>
+                    </div>
+                  </div>
 
                   {/* Original Prompt Text with Copy Button */}
                   <div className="p-3 rounded-lg bg-[#0c0d11] border border-[#1d212b] text-xs text-slate-300 font-mono relative group mb-3">
@@ -254,7 +347,7 @@ export default function PromptsPage() {
                     <button
                       onClick={() => handleCopyPrompt(prompt.originalPrompt, prompt.id)}
                       className="absolute top-2 right-2 p-1.5 rounded-md bg-[#181c25] hover:bg-[#222834] text-slate-400 hover:text-white transition-colors"
-                      title="Copy full prompt"
+                      title="Copy full verbatim prompt"
                     >
                       {copiedId === prompt.id ? (
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -264,70 +357,85 @@ export default function PromptsPage() {
                     </button>
                   </div>
 
-                  {/* Generation Settings badges if any */}
-                  {prompt.generationSettings && (
+                  {/* Technical Camera & Lighting Settings (When Present) */}
+                  {(prompt.cameraModel || prompt.lens || prompt.lightingSetup || prompt.renderingEngine) && (
                     <div className="flex flex-wrap gap-1.5 mb-3 text-[10px] text-slate-400 font-mono">
-                      {prompt.generationSettings.camera && (
+                      {prompt.cameraModel && (
                         <span className="px-2 py-0.5 rounded bg-[#171a23] border border-[#252a37]">
-                          📷 {prompt.generationSettings.camera}
+                          📷 {prompt.cameraModel}
                         </span>
                       )}
-                      {prompt.generationSettings.lens && (
+                      {prompt.lens && (
                         <span className="px-2 py-0.5 rounded bg-[#171a23] border border-[#252a37]">
-                          🔍 {prompt.generationSettings.lens}
+                          🔍 {prompt.lens}
                         </span>
                       )}
-                      {prompt.generationSettings.aspectRatio && (
+                      {prompt.lightingSetup && (
+                        <span className="px-2 py-0.5 rounded bg-[#171a23] border border-[#252a37] truncate max-w-[200px]">
+                          💡 {prompt.lightingSetup}
+                        </span>
+                      )}
+                      {prompt.renderingEngine && (
                         <span className="px-2 py-0.5 rounded bg-[#171a23] border border-[#252a37]">
-                          📐 {prompt.generationSettings.aspectRatio}
+                          ⚙ {prompt.renderingEngine}
                         </span>
                       )}
                     </div>
                   )}
 
                   {/* Tags */}
-                  <div className="flex flex-wrap gap-1 mb-4">
-                    {prompt.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-[10px] text-slate-400 bg-[#161922] px-2 py-0.5 rounded"
-                      >
-                        #{tag}
-                      </span>
-                    ))}
-                  </div>
+                  {prompt.tags && prompt.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {prompt.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="text-[10px] text-slate-400 bg-[#161922] px-2 py-0.5 rounded"
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Card Actions Footer */}
                 <div className="pt-3 border-t border-[#1d212b] flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Link
-                      href={`/p/${prompt.slug}`}
-                      target="_blank"
-                      className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-amber-400 transition-colors font-mono"
-                      title="View public prompt page"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>/p/{prompt.slug.slice(0, 16)}...</span>
-                    </Link>
+                    {prompt.latestPost?.instagramPermalink && (
+                      <a
+                        href={prompt.latestPost.instagramPermalink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 font-mono"
+                      >
+                        <span>Instagram Post</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    {/* Direct to Composer with this Prompt */}
-                    <Link
-                      href={`/composer?promptId=${prompt.id}`}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-medium transition-colors"
-                      title="Compose Instagram post with this prompt"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Use in Post</span>
-                    </Link>
+                    {/* Use in Post (Composer) */}
+                    {prompt.status === "Available" ? (
+                      <Link
+                        href={`/composer?promptId=${prompt.id}`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-semibold transition-all hover:scale-[1.02]"
+                        title="Create new Instagram post using this prompt"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Use in Post</span>
+                      </Link>
+                    ) : (
+                      <span className="text-[11px] text-slate-500 font-mono px-2 py-1 bg-[#141720] rounded border border-[#1e2330]">
+                        {prompt.status}
+                      </span>
+                    )}
 
                     {/* Edit */}
                     <Link
                       href={`/prompts/${prompt.id}/edit`}
                       className="p-1.5 rounded-lg bg-[#181c25] hover:bg-[#232936] text-slate-300 hover:text-white transition-colors"
-                      title="Edit prompt"
+                      title="Edit prompt details"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                     </Link>

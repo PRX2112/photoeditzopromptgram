@@ -390,7 +390,7 @@ export const dbService = {
   },
 
   // PROMPTS
-  getPrompts: async (options?: { category?: string; search?: string; includeArchived?: boolean }) => {
+  getPrompts: async (options?: { category?: string; search?: string; includeArchived?: boolean; status?: string }) => {
     try {
       const dbCheck = await checkDatabaseConnection();
       if (dbCheck.ok) {
@@ -411,16 +411,73 @@ export const dbService = {
 
         const items = await prisma.prompt.findMany({
           where,
+          include: {
+            posts: {
+              select: {
+                id: true,
+                status: true,
+                imageLifecycleStatus: true,
+                instagramPermalink: true,
+                publishedAt: true,
+                createdAt: true,
+              },
+              orderBy: { createdAt: "desc" },
+            },
+          },
           orderBy: { createdAt: "desc" },
         });
 
-        return items.map((p) => ({
-          ...p,
-          tags: p.tags ? p.tags.split(",").map((t) => t.trim()) : [],
-          generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
-          createdAt: p.createdAt.toISOString(),
-          updatedAt: p.updatedAt.toISOString(),
-        }));
+        const mapped = items.map((p) => {
+          let computedStatus: PromptItem["status"] = "Available";
+          const publishedPost = p.posts.find((post) => post.status === "PUBLISHED");
+          const scheduledPost = p.posts.find((post) => post.status === "SCHEDULED");
+          const draftPost = p.posts.find((post) => post.status === "DRAFT" || post.status === "PUBLISHING");
+          const failedPost = p.posts.find((post) => post.status === "FAILED");
+
+          if (publishedPost) {
+            if (publishedPost.imageLifecycleStatus === "CLEANUP_PENDING") {
+              computedStatus = "Image cleanup pending";
+            } else if (publishedPost.imageLifecycleStatus === "CLEANUP_FAILED") {
+              computedStatus = "Image cleanup failed";
+            } else {
+              computedStatus = "Published";
+            }
+          } else if (scheduledPost) {
+            computedStatus = "Scheduled";
+          } else if (draftPost) {
+            computedStatus = "Draft in progress";
+          } else if (failedPost) {
+            computedStatus = "Publication failed";
+          }
+
+          return {
+            ...p,
+            status: computedStatus,
+            tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+            generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
+            createdAt: p.createdAt.toISOString(),
+            updatedAt: p.updatedAt.toISOString(),
+            sourceImageUploadedAt: p.sourceImageUploadedAt?.toISOString() || null,
+            sourceImageDeletedAt: p.sourceImageDeletedAt?.toISOString() || null,
+            publishedAt: p.publishedAt?.toISOString() || null,
+            latestPost: p.posts[0]
+              ? ({
+                  id: p.posts[0].id,
+                  status: p.posts[0].status,
+                  imageLifecycleStatus: p.posts[0].imageLifecycleStatus,
+                  instagramPermalink: p.posts[0].instagramPermalink,
+                  publishedAt: p.posts[0].publishedAt?.toISOString() || null,
+                  createdAt: p.posts[0].createdAt.toISOString(),
+                } as unknown as PostItem)
+              : null,
+          };
+        });
+
+        if (options?.status && options.status !== "all") {
+          return mapped.filter((p) => p.status?.toLowerCase() === options.status?.toLowerCase());
+        }
+
+        return mapped;
       }
     } catch {
       // Fallback
@@ -446,18 +503,108 @@ export const dbService = {
     return list;
   },
 
+  getAvailablePrompts: async () => {
+    try {
+      const dbCheck = await checkDatabaseConnection();
+      if (dbCheck.ok) {
+        const items = await prisma.prompt.findMany({
+          where: {
+            isArchived: false,
+            isPublished: false,
+            posts: {
+              none: {
+                status: { in: ["DRAFT", "SCHEDULED", "PUBLISHING", "PUBLISHED"] },
+              },
+            },
+          },
+          include: {
+            posts: {
+              select: { id: true, status: true },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+
+        return items.map((p) => ({
+          ...p,
+          status: "Available" as const,
+          tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
+          createdAt: p.createdAt.toISOString(),
+          updatedAt: p.updatedAt.toISOString(),
+        }));
+      }
+    } catch {
+      // Fallback
+    }
+
+    return memoryState.prompts
+      .filter((p) => !p.isArchived && !p.isPublished)
+      .map((p) => ({ ...p, status: "Available" as const }));
+  },
+
   getPromptById: async (id: string) => {
     try {
       const dbCheck = await checkDatabaseConnection();
       if (dbCheck.ok) {
-        const p = await prisma.prompt.findUnique({ where: { id } });
+        const p = await prisma.prompt.findUnique({
+          where: { id },
+          include: {
+            posts: {
+              select: {
+                id: true,
+                status: true,
+                imageLifecycleStatus: true,
+                instagramPermalink: true,
+                publishedAt: true,
+                createdAt: true,
+              },
+              orderBy: { createdAt: "desc" },
+            },
+          },
+        });
         if (p) {
+          let computedStatus: PromptItem["status"] = "Available";
+          const publishedPost = p.posts.find((post) => post.status === "PUBLISHED");
+          const scheduledPost = p.posts.find((post) => post.status === "SCHEDULED");
+          const draftPost = p.posts.find((post) => post.status === "DRAFT" || post.status === "PUBLISHING");
+          const failedPost = p.posts.find((post) => post.status === "FAILED");
+
+          if (publishedPost) {
+            computedStatus =
+              publishedPost.imageLifecycleStatus === "CLEANUP_PENDING"
+                ? "Image cleanup pending"
+                : publishedPost.imageLifecycleStatus === "CLEANUP_FAILED"
+                ? "Image cleanup failed"
+                : "Published";
+          } else if (scheduledPost) {
+            computedStatus = "Scheduled";
+          } else if (draftPost) {
+            computedStatus = "Draft in progress";
+          } else if (failedPost) {
+            computedStatus = "Publication failed";
+          }
+
           return {
             ...p,
-            tags: p.tags ? p.tags.split(",").map((t) => t.trim()) : [],
+            status: computedStatus,
+            tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
             generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
             createdAt: p.createdAt.toISOString(),
             updatedAt: p.updatedAt.toISOString(),
+            sourceImageUploadedAt: p.sourceImageUploadedAt?.toISOString() || null,
+            sourceImageDeletedAt: p.sourceImageDeletedAt?.toISOString() || null,
+            publishedAt: p.publishedAt?.toISOString() || null,
+            latestPost: p.posts[0]
+              ? ({
+                  id: p.posts[0].id,
+                  status: p.posts[0].status,
+                  imageLifecycleStatus: p.posts[0].imageLifecycleStatus,
+                  instagramPermalink: p.posts[0].instagramPermalink,
+                  publishedAt: p.posts[0].publishedAt?.toISOString() || null,
+                  createdAt: p.posts[0].createdAt.toISOString(),
+                } as unknown as PostItem)
+              : null,
           };
         }
       }
@@ -485,11 +632,16 @@ export const dbService = {
         if (p) {
           return {
             ...p,
-            tags: p.tags ? p.tags.split(",").map((t) => t.trim()) : [],
+            tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
             generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
             createdAt: p.createdAt.toISOString(),
             updatedAt: p.updatedAt.toISOString(),
-            latestPost: p.posts[0] || null,
+            sourceImageUploadedAt: p.sourceImageUploadedAt?.toISOString() || null,
+            sourceImageDeletedAt: p.sourceImageDeletedAt?.toISOString() || null,
+            publishedAt: p.publishedAt?.toISOString() || null,
+            latestPost: p.posts[0]
+              ? { instagramPermalink: p.posts[0].instagramPermalink, publishedAt: p.posts[0].publishedAt?.toISOString() || null } as unknown as PostItem
+              : null,
           };
         }
       }
@@ -507,7 +659,7 @@ export const dbService = {
     return {
       ...item,
       latestPost: matchedPost
-        ? { instagramPermalink: matchedPost.instagramPermalink, publishedAt: matchedPost.publishedAt }
+        ? { instagramPermalink: matchedPost.instagramPermalink, publishedAt: matchedPost.publishedAt } as unknown as PostItem
         : null,
     };
   },
@@ -515,10 +667,22 @@ export const dbService = {
   createPrompt: async (data: {
     title: string;
     originalPrompt: string;
-    category: string;
-    tags: string[];
-    generationSettings?: Record<string, unknown>;
+    category?: string;
+    tags?: string[];
     slug: string;
+    sourceImageUrl?: string;
+    sourceBlobPathname?: string;
+    sourceContentType?: string;
+    sourceImageSize?: number;
+    cameraModel?: string;
+    lens?: string;
+    focalLength?: string;
+    aperture?: string;
+    shutterSpeed?: string;
+    iso?: string;
+    lightingSetup?: string;
+    renderingEngine?: string;
+    generationSettings?: Record<string, unknown>;
   }) => {
     try {
       const dbCheck = await checkDatabaseConnection();
@@ -527,18 +691,35 @@ export const dbService = {
           data: {
             title: data.title,
             originalPrompt: data.originalPrompt,
-            category: data.category,
-            tags: data.tags.join(","),
-            generationSettings: data.generationSettings ? JSON.stringify(data.generationSettings) : null,
+            category: data.category || "Uncategorized",
+            tags: (data.tags || []).join(","),
             slug: data.slug,
+            sourceImageUrl: data.sourceImageUrl || null,
+            sourceBlobPathname: data.sourceBlobPathname || null,
+            sourceContentType: data.sourceContentType || null,
+            sourceImageSize: data.sourceImageSize || null,
+            sourceImageStatus: "UPLOADED",
+            cameraModel: data.cameraModel || null,
+            lens: data.lens || null,
+            focalLength: data.focalLength || null,
+            aperture: data.aperture || null,
+            shutterSpeed: data.shutterSpeed || null,
+            iso: data.iso || null,
+            lightingSetup: data.lightingSetup || null,
+            renderingEngine: data.renderingEngine || null,
+            generationSettings: data.generationSettings ? JSON.stringify(data.generationSettings) : null,
           },
         });
         return {
           ...p,
-          tags: p.tags.split(",").map((t) => t.trim()),
+          status: "Available" as const,
+          tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
           generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
           createdAt: p.createdAt.toISOString(),
           updatedAt: p.updatedAt.toISOString(),
+          sourceImageUploadedAt: p.sourceImageUploadedAt?.toISOString() || null,
+          sourceImageDeletedAt: p.sourceImageDeletedAt?.toISOString() || null,
+          publishedAt: p.publishedAt?.toISOString() || null,
         };
       }
     } catch {
@@ -549,11 +730,26 @@ export const dbService = {
       id: `p-${Date.now()}`,
       title: data.title,
       originalPrompt: data.originalPrompt,
-      category: data.category,
-      tags: data.tags,
+      category: data.category || "Uncategorized",
+      tags: data.tags || [],
       generationSettings: data.generationSettings,
       slug: data.slug,
+      sourceImageUrl: data.sourceImageUrl || null,
+      sourceBlobPathname: data.sourceBlobPathname || null,
+      sourceContentType: data.sourceContentType || null,
+      sourceImageSize: data.sourceImageSize || null,
+      sourceImageStatus: "UPLOADED",
+      cameraModel: data.cameraModel || null,
+      lens: data.lens || null,
+      focalLength: data.focalLength || null,
+      aperture: data.aperture || null,
+      shutterSpeed: data.shutterSpeed || null,
+      iso: data.iso || null,
+      lightingSetup: data.lightingSetup || null,
+      renderingEngine: data.renderingEngine || null,
       isArchived: false,
+      isPublished: false,
+      status: "Available",
       viewCount: 0,
       copyCount: 0,
       createdAt: new Date().toISOString(),
@@ -570,9 +766,21 @@ export const dbService = {
       originalPrompt: string;
       category: string;
       tags: string[];
-      generationSettings?: Record<string, unknown>;
       slug: string;
       isArchived: boolean;
+      sourceImageUrl: string | null;
+      sourceBlobPathname: string | null;
+      sourceContentType: string | null;
+      sourceImageSize: number | null;
+      cameraModel: string | null;
+      lens: string | null;
+      focalLength: string | null;
+      aperture: string | null;
+      shutterSpeed: string | null;
+      iso: string | null;
+      lightingSetup: string | null;
+      renderingEngine: string | null;
+      generationSettings: Record<string, unknown>;
     }>
   ) => {
     try {
@@ -583,16 +791,28 @@ export const dbService = {
           data: {
             ...(data.title && { title: data.title }),
             ...(data.originalPrompt && { originalPrompt: data.originalPrompt }),
-            ...(data.category && { category: data.category }),
+            ...(data.category !== undefined && { category: data.category }),
             ...(data.tags && { tags: data.tags.join(",") }),
-            ...(data.generationSettings && { generationSettings: JSON.stringify(data.generationSettings) }),
             ...(data.slug && { slug: data.slug }),
             ...(data.isArchived !== undefined && { isArchived: data.isArchived }),
+            ...(data.sourceImageUrl !== undefined && { sourceImageUrl: data.sourceImageUrl }),
+            ...(data.sourceBlobPathname !== undefined && { sourceBlobPathname: data.sourceBlobPathname }),
+            ...(data.sourceContentType !== undefined && { sourceContentType: data.sourceContentType }),
+            ...(data.sourceImageSize !== undefined && { sourceImageSize: data.sourceImageSize }),
+            ...(data.cameraModel !== undefined && { cameraModel: data.cameraModel }),
+            ...(data.lens !== undefined && { lens: data.lens }),
+            ...(data.focalLength !== undefined && { focalLength: data.focalLength }),
+            ...(data.aperture !== undefined && { aperture: data.aperture }),
+            ...(data.shutterSpeed !== undefined && { shutterSpeed: data.shutterSpeed }),
+            ...(data.iso !== undefined && { iso: data.iso }),
+            ...(data.lightingSetup !== undefined && { lightingSetup: data.lightingSetup }),
+            ...(data.renderingEngine !== undefined && { renderingEngine: data.renderingEngine }),
+            ...(data.generationSettings && { generationSettings: JSON.stringify(data.generationSettings) }),
           },
         });
         return {
           ...p,
-          tags: p.tags.split(",").map((t) => t.trim()),
+          tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
           generationSettings: p.generationSettings ? JSON.parse(p.generationSettings) : undefined,
           createdAt: p.createdAt.toISOString(),
           updatedAt: p.updatedAt.toISOString(),
@@ -718,12 +938,16 @@ export const dbService = {
             hashtags: data.hashtags,
             commentKeyword: data.commentKeyword.toUpperCase(),
             mediaType: data.mediaType || "IMAGE",
-            blobUrl: data.blobUrl || data.temporaryImageUrl,
-            blobPathname: data.blobPathname,
-            temporaryImageUrl: data.blobUrl || data.temporaryImageUrl,
+            blobUrl: data.blobUrl || data.renderedImageUrl || data.temporaryImageUrl,
+            blobPathname: data.blobPathname || data.renderedBlobPathname,
+            temporaryImageUrl: data.blobUrl || data.renderedImageUrl || data.temporaryImageUrl,
             temporaryAssetKey: data.temporaryAssetKey,
             imageUploadedAt: data.imageUploadedAt ? new Date(data.imageUploadedAt) : new Date(),
             imageLifecycleStatus: data.imageLifecycleStatus || "UPLOADED",
+            renderedImageUrl: data.renderedImageUrl || null,
+            renderedBlobPathname: data.renderedBlobPathname || null,
+            renderedImageStatus: data.renderedImageStatus || "UPLOADED",
+            renderedAt: data.renderedAt ? new Date(data.renderedAt) : null,
             status: data.status,
             scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : null,
             publishedAt: data.publishedAt ? new Date(data.publishedAt) : null,
@@ -735,6 +959,7 @@ export const dbService = {
           updatedAt: post.updatedAt.toISOString(),
           imageUploadedAt: post.imageUploadedAt?.toISOString() || null,
           imageDeletedAt: post.imageDeletedAt?.toISOString() || null,
+          renderedAt: post.renderedAt?.toISOString() || null,
           scheduledFor: post.scheduledFor?.toISOString() || null,
           publishedAt: post.publishedAt?.toISOString() || null,
         };
@@ -747,7 +972,7 @@ export const dbService = {
       ...data,
       id: `post-${Date.now()}`,
       commentKeyword: data.commentKeyword.toUpperCase(),
-      blobUrl: data.blobUrl || data.temporaryImageUrl,
+      blobUrl: data.blobUrl || data.renderedImageUrl || data.temporaryImageUrl,
       imageLifecycleStatus: data.imageLifecycleStatus || "UPLOADED",
       cleanupAttempts: 0,
       publicationAttempts: 0,
@@ -777,6 +1002,12 @@ export const dbService = {
             ...(data.imageDeletedAt !== undefined && {
               imageDeletedAt: data.imageDeletedAt ? new Date(data.imageDeletedAt) : null,
             }),
+            ...(data.renderedImageUrl !== undefined && { renderedImageUrl: data.renderedImageUrl }),
+            ...(data.renderedBlobPathname !== undefined && { renderedBlobPathname: data.renderedBlobPathname }),
+            ...(data.renderedImageStatus && { renderedImageStatus: data.renderedImageStatus }),
+            ...(data.renderedAt !== undefined && {
+              renderedAt: data.renderedAt ? new Date(data.renderedAt) : null,
+            }),
             ...(data.cleanupAttempts !== undefined && { cleanupAttempts: data.cleanupAttempts }),
             ...(data.lastCleanupError !== undefined && { lastCleanupError: data.lastCleanupError }),
             ...(data.containerId !== undefined && { containerId: data.containerId }),
@@ -800,6 +1031,7 @@ export const dbService = {
           updatedAt: post.updatedAt.toISOString(),
           imageUploadedAt: post.imageUploadedAt?.toISOString() || null,
           imageDeletedAt: post.imageDeletedAt?.toISOString() || null,
+          renderedAt: post.renderedAt?.toISOString() || null,
           scheduledFor: post.scheduledFor?.toISOString() || null,
           publishedAt: post.publishedAt?.toISOString() || null,
         };

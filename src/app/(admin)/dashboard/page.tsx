@@ -458,7 +458,13 @@ export default function DashboardPage() {
                       </span>
                     </div>
 
-                    <p className="text-xs text-slate-200 line-clamp-1 font-medium">
+                    {post.prompt?.title && (
+                      <h4 className="text-xs font-semibold text-white tracking-tight">
+                        {post.prompt.title}
+                      </h4>
+                    )}
+
+                    <p className="text-xs text-slate-300 line-clamp-1 font-medium">
                       {post.caption}
                     </p>
 

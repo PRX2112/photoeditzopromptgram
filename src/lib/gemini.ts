@@ -3,13 +3,132 @@ import { z } from "zod";
 import type { GeminiCaptionGenerationInput, GeminiCaptionGenerationOutput } from "@/types";
 
 export const GeminiOutputSchema = z.object({
-  title: z.string().min(1, "Title is required"),
+  title: z.string().optional().default("Prompt Inspiration"),
   caption: z.string().min(10, "Caption must be descriptive"),
-  hashtags: z.array(z.string()).min(3, "At least 3 hashtags required"),
-  suggestedKeywords: z.array(z.string()).min(1, "At least 1 keyword suggested"),
-  altText: z.string().min(10, "Accessible alt text required"),
+  hashtags: z.array(z.string()).default([]),
+  commentKeyword: z.string().optional(),
+  suggestedKeywords: z.array(z.string()).default([]),
+  altText: z.string().optional().default("Photography prompt visual showcase"),
   confidenceNotes: z.string().optional(),
 });
+
+/**
+ * Combines caption and hashtags cleanly for publication,
+ * ensuring no duplicate hashtags and limiting total hashtags to at most 5.
+ */
+export function combineCaptionAndHashtags(
+  caption: string,
+  rawHashtags: string | string[]
+): string {
+  const cleanCaption = (caption || "").trim();
+
+  // Find hashtags already written directly inside the caption text (case-insensitive)
+  const existingTags = new Set(
+    (cleanCaption.match(/#[a-zA-Z0-9_]+/g) || []).map((t) => t.toLowerCase())
+  );
+
+  // Normalize incoming hashtags
+  const incomingList: string[] = Array.isArray(rawHashtags)
+    ? rawHashtags
+    : (rawHashtags || "").split(/[\s,]+/);
+
+  const additionalTags: string[] = [];
+
+  for (let tag of incomingList) {
+    tag = tag.trim();
+    if (!tag) continue;
+    if (!tag.startsWith("#")) tag = `#${tag}`;
+    const cleanTag = tag.replace(/[^a-zA-Z0-9_#]/g, "");
+    if (cleanTag.length <= 1) continue;
+
+    const lower = cleanTag.toLowerCase();
+    if (!existingTags.has(lower)) {
+      existingTags.add(lower);
+      additionalTags.push(cleanTag);
+    }
+
+    if (existingTags.size >= 5) break;
+  }
+
+  if (additionalTags.length === 0) {
+    return cleanCaption;
+  }
+
+  return `${cleanCaption}\n\n${additionalTags.join(" ")}`.trim();
+}
+
+/**
+ * Validates and refines Gemini output according to strict CTA-first rules:
+ * 1. Confirms the Primary CTA contains the configured comment keyword.
+ * 2. Confirms the caption is within the ~40–70 word target, distilling if model generated an essay.
+ * 3. Limits hashtags to at most 5 plain-text tags.
+ * 4. Preserves the original prompt verbatim.
+ */
+export function validateAndCleanCaptionOutput(
+  raw: {
+    title?: string;
+    caption: string;
+    hashtags?: string[];
+    commentKeyword?: string;
+    suggestedKeywords?: string[];
+    altText?: string;
+    confidenceNotes?: string;
+  },
+  keyword: string,
+  originalPrompt: string
+): GeminiCaptionGenerationOutput {
+  const upperKeyword = keyword.toUpperCase();
+  let caption = raw.caption.trim();
+
+  // 1. Confirm the CTA contains the configured keyword
+  if (!caption.toUpperCase().includes(upperKeyword)) {
+    // Inject the mandatory CTA immediately after the first hook line
+    const ctaLine = `👇 Comment ${upperKeyword} to get the full photography prompt in your DMs!`;
+    const paragraphs = caption.split("\n\n").filter(Boolean);
+    if (paragraphs.length > 0) {
+      paragraphs.splice(1, 0, ctaLine);
+      caption = paragraphs.join("\n\n");
+    } else {
+      caption = `${caption}\n\n${ctaLine}`;
+    }
+  }
+
+  // 2. Word count target check (target 40-70 words).
+  // If the model produced a lengthy essay (>90 words), distill to Hook + CTA + Supporting line
+  const words = caption.split(/\s+/).filter(Boolean);
+  if (words.length > 90) {
+    const lines = caption.split("\n").map((l) => l.trim()).filter(Boolean);
+    const hook = lines[0] || "Want to recreate this aesthetic look? 📸";
+    const cta = `👇 Comment ${upperKeyword} to get the full photography prompt in your DMs!`;
+    const lastLine =
+      lines.length > 2 && !lines[lines.length - 1].toUpperCase().includes(upperKeyword)
+        ? lines[lines.length - 1]
+        : "Save this for your next creative shoot. ❤️";
+    caption = `${hook}\n\n${cta}\n\n${lastLine}`;
+  }
+
+  // 3. Limit hashtags to at most 5 and normalize formatting
+  const rawTags = Array.isArray(raw.hashtags) ? raw.hashtags : [];
+  const cleanHashtags = rawTags
+    .map((tag) => {
+      const clean = tag.replace(/[^a-zA-Z0-9_#]/g, "");
+      return clean.startsWith("#") ? clean : `#${clean}`;
+    })
+    .filter((tag) => tag.length > 1)
+    .slice(0, 5);
+
+  return {
+    title: raw.title || "Prompt Inspiration",
+    caption,
+    hashtags: cleanHashtags,
+    commentKeyword: upperKeyword,
+    suggestedKeywords: raw.suggestedKeywords && raw.suggestedKeywords.length > 0
+      ? Array.from(new Set([upperKeyword, ...raw.suggestedKeywords]))
+      : [upperKeyword],
+    altText: raw.altText || `Photography prompt showcase: ${originalPrompt.slice(0, 80)}`,
+    confidenceNotes: raw.confidenceNotes,
+  };
+}
 
 export const geminiService = {
   /**
@@ -20,14 +139,13 @@ export const geminiService = {
   },
 
   /**
-   * Generate structured photography caption, hashtags, and keywords
+   * Generate structured CTA-first photography caption, hashtags, and keywords
    */
   generateCaption: async (
     input: GeminiCaptionGenerationInput
   ): Promise<GeminiCaptionGenerationOutput> => {
     const apiKey = process.env.GEMINI_API_KEY;
     const keyword = (input.commentKeyword || "PROMPT").toUpperCase();
-    const style = input.captionStyle || "editorial";
 
     // If Gemini API key is configured, call official Gemini API
     if (apiKey && apiKey.trim().length > 0) {
@@ -35,35 +153,54 @@ export const geminiService = {
         const ai = new GoogleGenAI({ apiKey });
 
         const promptInstruction = `
-You are a senior photography curator, art director, and social media copywriter for an Instagram page dedicated to photography inspiration, lighting setups, and AI image prompts.
+You are an expert Instagram copywriter and social media strategist for an Instagram page dedicated to photography prompts and creator education.
+
+OBJECTIVE:
+Write a high-converting, CTA-first Instagram caption designed to drive comments for automated DM delivery.
 
 INPUT DETAILS:
-- Original Prompt: "${input.originalPrompt}"
-- Photography Category: "${input.category}"
-- Notes / Context: "${input.imageTitle || "None provided"}"
+- Original Photography Prompt: "${input.originalPrompt}"
+- Photography Category / Context: "${input.category || "Creative Photography"}"
+- Title / Notes: "${input.imageTitle || "None provided"}"
 - Target Comment Keyword: "${keyword}"
-- Desired Caption Style: "${style}"
 
-RULES:
-1. Do NOT modify the original prompt. The user needs the original prompt preserved verbatim.
-2. The caption must sound authentic, editorial, and inspiring to real photographers (focusing on light quality, texture, color grading, emotion, and compositional balance).
-3. The caption MUST include a natural call-to-action inviting followers to comment the keyword "${keyword}" to receive the full prompt in their DMs (e.g. "Comment ${keyword} to receive the full prompt, lighting notes, and camera settings directly in your DMs.").
-4. Format hashtags with leading '#' symbols (provide 8-15 high-intent photography hashtags).
-5. Suggest 3-5 punchy 1-word comment keywords (all UPPERCASE) relevant to this specific theme.
-6. Provide rich, accessible altText for screen readers and search algorithms.
-7. Return ONLY a single raw JSON object matching this exact schema:
+MANDATORY CAPTION STRUCTURE:
+1. Short hook (Line 1): Exactly ONE engaging line related to the photograph, aesthetic look, or the benefit of the prompt. Use restrained emoji (e.g. 📸, ✨, 🎬).
+2. Primary CTA (Line 2): Explicitly and immediately instruct users to comment the keyword to get the prompt:
+   "👇 Comment ${keyword} to get the full photography prompt in your DMs!"
+3. Optional supporting line (Line 3): At most ONE short sentence describing the vibe or telling users to save the post (e.g. "Save this for your next shoot. ❤️").
+
+STRICT RULES:
+- Target word count: 40–70 words (excluding hashtags). Keep it concise so followers see the CTA without needing to tap "...more".
+- Place the exact configured comment keyword "${keyword}" right near the beginning of the caption (in the Primary CTA on Line 2).
+- NEVER hardcode a generic keyword like STUDIO if the configured keyword is different. Use "${keyword}".
+- Do NOT bury the CTA beneath paragraphs of editorial storytelling.
+- Do NOT include lengthy descriptions of camera settings, lighting theory, sensor sizes, or film grain.
+- Do NOT claim the DM contains camera settings, presets, or downloadable files. The DM contains the link to the full prompt.
+- Avoid generic phrases such as "True editorial storytelling lives in the spaces between poses."
+- Provide at most FIVE (5) relevant hashtags in the "hashtags" array. Do NOT return 10-15 hashtags.
+- Do NOT format hashtags as Markdown links in the caption. Return normal Instagram-ready caption text.
+- Never modify or rewrite the original photography prompt.
+
+OUTPUT JSON SCHEMA:
+Return ONLY a valid JSON object matching:
 {
-  "title": "Short evocative title (under 60 chars)",
-  "caption": "Full Instagram caption with line breaks and call to action",
-  "hashtags": ["#weddingphotography", "#goldenhour", ...],
-  "suggestedKeywords": ["${keyword}", "LIGHT", "PRESET", "CAMERA"],
-  "altText": "Detailed descriptive alt text of the photographic subject and lighting",
-  "confidenceNotes": "Notes on stylistic choices"
+  "title": "Short evocative title (under 50 chars)",
+  "caption": "Short engaging hook\\n\\n👇 Comment ${keyword} to get the full photography prompt in your DMs!\\n\\nSave this for your next shoot. ❤️",
+  "hashtags": ["#PhotographyPrompts", "#PhotoInspo", "#PortraitPhotography", "#GoldenHour", "#CreativePhoto"],
+  "commentKeyword": "${keyword}",
+  "suggestedKeywords": ["${keyword}"],
+  "altText": "Concise and accurate image description"
 }
 `;
 
         let response;
-        const candidateModels = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"];
+        const candidateModels = [
+          "gemini-3.5-flash-lite",
+          "gemini-flash-lite-latest",
+          "gemini-3.1-flash-lite",
+          "gemini-3.5-flash",
+        ];
         let lastError: unknown;
 
         for (const candidate of candidateModels) {
@@ -90,105 +227,96 @@ RULES:
         const parsedJson = JSON.parse(rawText);
         const validated = GeminiOutputSchema.parse(parsedJson);
 
-        return validated;
+        return validateAndCleanCaptionOutput(validated, keyword, input.originalPrompt);
       } catch (geminiError: unknown) {
         console.warn("Gemini API call failed, falling back to curated photographic engine:", geminiError);
-        // Fall back to rule-based photographer generator if API quota or connection fails
       }
     }
 
-    // High-fidelity photography generator fallback
+    // High-fidelity CTA-first fallback generator
     return geminiService.generatePhotographicFallback(input);
   },
 
   /**
    * Rule-based photographic caption generator for offline/unconfigured environments
+   * Strictly follows the mandatory 1. Hook, 2. CTA with keyword, 3. Supporting line, 4. Max 5 hashtags
    */
   generatePhotographicFallback: (
     input: GeminiCaptionGenerationInput
   ): GeminiCaptionGenerationOutput => {
     const keyword = (input.commentKeyword || "PROMPT").toUpperCase();
-    const cat = input.category;
+    const cat = input.category || "Fine Art Photography";
 
-    const stylePrefixes: Record<string, string> = {
-      editorial: "Where geometry meets intentional light. Exploring the delicate nuance of tone and atmosphere.",
-      storytelling: "Every frame carries a narrative whispered in shadows and sculpted by time.",
-      minimalist: "Distilled to essence. Clean negative space, precise texture, and honest lighting.",
-      technical: "Calibrated color harmony, balanced exposure, and sculpted rim illumination.",
+    // 1. Short engaging hook (Line 1)
+    const hooks: Record<string, string> = {
+      "Wedding and bridal": "Want to capture timeless, romantic golden-hour bridal portraits like this? 📸",
+      "Fashion and editorial": "Want to recreate this bold, high-fashion editorial look? ✨",
+      "Cinematic portraits": "Looking to master this moody cinematic portrait look? 🎬",
+      "Creative lighting": "Want to experiment with this dramatic creative lighting setup? 💡",
     };
+    const hook = hooks[cat] || `Want to recreate this cinematic ${cat.toLowerCase()} shot? 📸`;
 
-    const prefix = stylePrefixes[input.captionStyle || "editorial"] || stylePrefixes.editorial;
+    // 2. Primary CTA (Line 2)
+    const cta = `👇 Comment ${keyword} to get the full photography prompt in your DMs!`;
 
+    // 3. Optional supporting line (Line 3)
+    const supporting = "Save this for your next creative shoot. ❤️";
+
+    // Combined caption: Hook + Primary CTA + Supporting line
+    const caption = `${hook}\n\n${cta}\n\n${supporting}`;
+
+    // Hashtags: Maximum 5 relevant tags
     const hashtagsMap: Record<string, string[]> = {
       "Wedding and bridal": [
-        "#weddingphotography",
-        "#bridalportrait",
-        "#goldenhourwedding",
-        "#weddingphotographer",
-        "#fineartwedding",
-        "#weddingeditorial",
-        "#destinationwedding",
-        "#portraitlighting",
+        "#WeddingPhotography",
+        "#BridalPortrait",
+        "#WeddingInspo",
+        "#PhotographyPrompts",
+        "#GoldenHour",
       ],
       "Fashion and editorial": [
-        "#fashioneditorial",
-        "#editorialphotography",
-        "#vogueitalia",
-        "#highfashion",
-        "#fashionphotographer",
-        "#editorialshoot",
-        "#studioeditorial",
-        "#fashionlighting",
+        "#FashionEditorial",
+        "#EditorialPhotography",
+        "#HighFashion",
+        "#PhotographyPrompts",
+        "#StudioPhotography",
       ],
       "Cinematic portraits": [
-        "#cinematicportrait",
-        "#anamorphic",
-        "#moodyportraits",
-        "#cinematography",
-        "#storyportrait",
-        "#cinematiclighting",
-        "#filmgrain",
-        "#directorofphotography",
+        "#CinematicPortraits",
+        "#MoodyPortraits",
+        "#PortraitPhotography",
+        "#PhotographyPrompts",
+        "#CinematicLighting",
       ],
       "Creative lighting": [
-        "#creativelighting",
-        "#chiaroscuro",
-        "#prismphotography",
-        "#studiolighting",
-        "#rembrandtlighting",
-        "#opticaleffects",
-        "#shadowplay",
+        "#CreativeLighting",
+        "#Chiaroscuro",
+        "#StudioLighting",
+        "#PhotographyPrompts",
+        "#PhotoInspiration",
       ],
     };
 
-    const categoryTags =
+    const categoryTags = (
       hashtagsMap[cat] || [
-        "#photographyinspiration",
-        "#photographylife",
-        "#portraitphotography",
-        "#naturallightphotography",
-        "#visualstoryteller",
-        "#cameraandlens",
-      ];
+        "#PhotographyPrompts",
+        "#PhotoInspiration",
+        "#PortraitPhotography",
+        "#CreativePhotography",
+        "#VisualStoryteller",
+      ]
+    ).slice(0, 5);
 
-    const title = input.imageTitle || `${cat} Study`;
-
-    const caption = `${prefix}\n\nA masterclass in ${cat.toLowerCase()}. Notice the depth of field, subtle shadow transitions, and intentional color palette.\n\nComment "${keyword}" below and I'll send the full prompt, lens setup, and lighting configuration straight to your DMs.`;
-
-    const suggestedKeywords = [
-      keyword,
-      cat.split(" ")[0].toUpperCase(),
-      "SETTINGS",
-      "PROMPT",
-    ];
+    const title = input.imageTitle || `${cat} Inspiration`;
 
     return {
       title,
       caption,
       hashtags: categoryTags,
-      suggestedKeywords,
-      altText: `Photographic study in ${cat} style featuring ${input.originalPrompt.slice(0, 100)}...`,
-      confidenceNotes: "Generated with photographic style guidelines.",
+      commentKeyword: keyword,
+      suggestedKeywords: [keyword],
+      altText: `Photography prompt study in ${cat} style: ${input.originalPrompt.slice(0, 80)}`,
+      confidenceNotes: "Generated with CTA-first prompt delivery structure.",
     };
   },
 };

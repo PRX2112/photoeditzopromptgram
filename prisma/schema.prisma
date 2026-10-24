@@ -95,24 +95,49 @@ model InstagramAccount {
 }
 
 model Prompt {
-  id                 String          @id @default(cuid())
+  id                 String               @id @default(cuid())
   title              String
-  originalPrompt     String          @db.Text
-  category           String
-  tags               String          // Comma-separated tags or JSON string
-  generationSettings String?         @db.Text // JSON string: Aspect ratio, camera, lighting, engine, etc.
-  slug               String          @unique
-  isArchived         Boolean         @default(false)
-  viewCount          Int             @default(0)
-  copyCount          Int             @default(0)
+  originalPrompt     String               @db.Text
+  category           String               @default("Uncategorized")
+  tags               String               @default("") // Comma-separated tags or JSON string
+  generationSettings String?              @db.Text // JSON string: Aspect ratio, camera, lighting, engine, etc.
+  slug               String               @unique
+  isArchived         Boolean              @default(false)
+  viewCount          Int                  @default(0)
+  copyCount          Int                  @default(0)
+
+  // Source Image Storage Lifecycle (Vercel Blob)
+  sourceImageUrl        String?              @db.Text
+  sourceBlobPathname    String?
+  sourceContentType     String?
+  sourceImageSize       Int?
+  sourceImageStatus     ImageLifecycleStatus @default(UPLOADED)
+  sourceImageUploadedAt DateTime?            @default(now())
+  sourceImageDeletedAt  DateTime?
+
+  // Prompt Publication & Availability State
+  isPublished        Boolean              @default(false)
+  publishedAt        DateTime?
+
+  // Optional Camera & Technical Metadata (All Optional)
+  cameraModel        String?
+  lens               String?
+  focalLength        String?
+  aperture           String?
+  shutterSpeed       String?
+  iso                String?
+  lightingSetup      String?
+  renderingEngine    String?
+
   posts              Post[]
   promptRequests     PromptRequest[]
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   @@index([slug])
   @@index([category])
   @@index([isArchived])
+  @@index([isPublished])
   @@index([createdAt])
 }
 
@@ -127,8 +152,8 @@ model Post {
   commentKeyword         String               // Configured keyword to trigger prompt delivery (e.g. BRIDAL)
   mediaType              String               @default("IMAGE") // IMAGE, CAROUSEL, REELS
 
-  // Vercel Blob & Image Lifecycle Tracking
-  blobUrl                String?              @db.Text // Temporary Vercel Blob URL
+  // Vercel Blob & Image Lifecycle Tracking (Source & Rendered Assets)
+  blobUrl                String?              @db.Text // Temporary Vercel Blob URL (published image)
   blobPathname           String?              // Storage key / pathname in Vercel Blob
   temporaryImageUrl      String?              @db.Text // Backward-compatible ephemeral storage URL
   temporaryAssetKey      String?              // Legacy reference key
@@ -137,6 +162,14 @@ model Post {
   imageDeletedAt         DateTime?
   cleanupAttempts        Int                  @default(0)
   lastCleanupError       String?              @db.Text
+
+  // Finished Instagram Rendered Image (Created via FFmpeg)
+  renderedImageUrl       String?              @db.Text // Vercel Blob URL for 1080x1350 rendered image
+  renderedBlobPathname   String?
+  renderedImageStatus    ImageLifecycleStatus? @default(UPLOADED)
+  renderedAt             DateTime?
+  sourceBlobDeletedAt    DateTime?
+  renderedBlobDeletedAt  DateTime?
 
   // Meta Instagram Publishing & Reconciliation
   containerId            String?              // Instagram media container ID

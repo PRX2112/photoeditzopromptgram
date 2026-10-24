@@ -22,20 +22,27 @@ vi.mock("@vercel/blob", () => ({
   del: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock @/lib/prisma
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    post: {
-      findUnique: vi.fn(),
-      update: vi.fn().mockResolvedValue({}),
+vi.mock("@/lib/prisma", () => {
+  const mockPost = {
+    findUnique: vi.fn(),
+    update: vi.fn().mockResolvedValue({}),
+  };
+  const mockPrompt = {
+    findUnique: vi.fn().mockResolvedValue(null),
+    update: vi.fn().mockResolvedValue({}),
+  };
+  return {
+    prisma: {
+      post: mockPost,
+      prompt: mockPrompt,
+      scheduledJob: {
+        create: vi.fn().mockResolvedValue({}),
+      },
+      $transaction: vi.fn((callback) => callback({ post: mockPost, prompt: mockPrompt })),
     },
-    scheduledJob: {
-      create: vi.fn().mockResolvedValue({}),
-    },
-    $transaction: vi.fn((callback) => callback({})),
-  },
-  checkDatabaseConnection: vi.fn().mockResolvedValue({ ok: true }),
-}));
+    checkDatabaseConnection: vi.fn().mockResolvedValue({ ok: true }),
+  };
+});
 
 describe("Vercel Blob Image Lifecycle", () => {
   beforeEach(() => {

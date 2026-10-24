@@ -46,52 +46,79 @@ export const cleanupService = {
       }
 
       // If already deleted
-      if (post.imageLifecycleStatus === "DELETED" || (!post.blobUrl && !post.temporaryImageUrl)) {
-        return {
-          success: true,
-          postId,
-          message: "Image already deleted or cleared.",
-        };
+      // Collect all temporary Blob URLs to delete
+      const urlsToDelete: string[] = [];
+      if (post.renderedImageUrl) urlsToDelete.push(post.renderedImageUrl);
+      if (post.blobUrl && !urlsToDelete.includes(post.blobUrl)) urlsToDelete.push(post.blobUrl);
+      if (post.temporaryImageUrl && !urlsToDelete.includes(post.temporaryImageUrl)) urlsToDelete.push(post.temporaryImageUrl);
+
+      // Also clean up prompt source image if post has prompt
+      if (post.promptId) {
+        const associatedPrompt = await prisma.prompt.findUnique({
+          where: { id: post.promptId },
+          select: { id: true, sourceImageUrl: true },
+        });
+        if (associatedPrompt?.sourceImageUrl && !urlsToDelete.includes(associatedPrompt.sourceImageUrl)) {
+          urlsToDelete.push(associatedPrompt.sourceImageUrl);
+        }
       }
 
-      const targetUrl = post.blobUrl || post.temporaryImageUrl;
-      if (!targetUrl) {
+      if (urlsToDelete.length === 0) {
         await prisma.post.update({
           where: { id: postId },
           data: {
             imageLifecycleStatus: "DELETED",
+            renderedImageStatus: "DELETED",
             imageDeletedAt: new Date(),
           },
         });
-        return { success: true, postId, message: "No Blob URL to delete; marked DELETED." };
+        return { success: true, postId, message: "No Blob URLs to delete; marked DELETED." };
       }
 
       // 2. Perform deletion from Vercel Blob
       try {
-        const deleteRes = await vercelBlobService.deleteTemporaryImage(targetUrl);
-
-        if (!deleteRes.success) {
-          throw new Error(deleteRes.error || "Blob deletion failed");
+        for (const url of urlsToDelete) {
+          const deleteRes = await vercelBlobService.deleteTemporaryImage(url);
+          if (!deleteRes.success && !deleteRes.error?.includes("already deleted")) {
+            throw new Error(deleteRes.error || "Blob deletion failed");
+          }
         }
 
         // 3. Record successful cleanup in database transaction
-        await prisma.post.update({
-          where: { id: postId },
-          data: {
-            imageLifecycleStatus: "DELETED",
-            imageDeletedAt: new Date(),
-            blobUrl: null, // Clear URL
-            blobPathname: null,
-            temporaryImageUrl: null,
-            lastCleanupError: null,
-          },
+        await prisma.$transaction(async (tx) => {
+          await tx.post.update({
+            where: { id: postId },
+            data: {
+              imageLifecycleStatus: "DELETED",
+              renderedImageStatus: "DELETED",
+              imageDeletedAt: new Date(),
+              blobUrl: null,
+              blobPathname: null,
+              renderedImageUrl: null,
+              renderedBlobPathname: null,
+              temporaryImageUrl: null,
+              lastCleanupError: null,
+            },
+          });
+
+          if (post.promptId) {
+            await tx.prompt.update({
+              where: { id: post.promptId },
+              data: {
+                sourceImageStatus: "DELETED",
+                sourceImageDeletedAt: new Date(),
+                sourceImageUrl: null,
+                sourceBlobPathname: null,
+              },
+            });
+          }
         });
 
         return {
           success: true,
           postId,
-          blobUrl: targetUrl,
-          message: "Temporary Blob image successfully deleted.",
+          blobUrl: urlsToDelete.join(", "),
+          message: "All temporary Blob assets successfully purged.",
         };
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);

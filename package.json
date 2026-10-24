@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/genai": "^2.30.0",
     "@prisma/client": "^6.19.3",
     "@vercel/blob": "^2.8.2",

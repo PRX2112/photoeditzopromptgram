@@ -1,17 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { dbService } from "@/lib/db-service";
-import { slugify } from "@/lib/utils";
+import { generateUniqueSlug } from "@/lib/slugs";
 import { z } from "zod";
 
 const UpdatePromptSchema = z.object({
-  title: z.string().min(3).optional(),
-  originalPrompt: z.string().min(10).optional(),
+  title: z.string().min(2).optional(),
+  originalPrompt: z.string().min(5).optional(),
+  sourceImageUrl: z.string().url().optional().nullable(),
+  sourceBlobPathname: z.string().optional().nullable(),
+  sourceContentType: z.string().optional().nullable(),
+  sourceImageSize: z.number().optional().nullable(),
   category: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  generationSettings: z.record(z.string(), z.any()).optional(),
   slug: z.string().optional(),
   isArchived: z.boolean().optional(),
+
+  // Optional Camera & Technical Metadata
+  cameraModel: z.string().optional().nullable(),
+  lens: z.string().optional().nullable(),
+  focalLength: z.string().optional().nullable(),
+  aperture: z.string().optional().nullable(),
+  shutterSpeed: z.string().optional().nullable(),
+  iso: z.string().optional().nullable(),
+  lightingSetup: z.string().optional().nullable(),
+  renderingEngine: z.string().optional().nullable(),
+  generationSettings: z.record(z.string(), z.any()).optional().nullable(),
 });
 
 export async function GET(
@@ -49,9 +63,11 @@ export async function PUT(
       );
     }
 
-    const updateData = { ...parsed.data };
+    const updateData: Record<string, any> = { ...parsed.data };
+
+    // If an explicit new slug was requested, ensure collision safety
     if (updateData.slug) {
-      updateData.slug = slugify(updateData.slug);
+      updateData.slug = await generateUniqueSlug(updateData.slug, id);
     }
 
     const updated = await dbService.updatePrompt(id, updateData);
@@ -78,7 +94,6 @@ export async function DELETE(
     }
 
     const { id } = await context.params;
-    // Archive prompt instead of destructive deletion
     const updated = await dbService.updatePrompt(id, { isArchived: true });
 
     if (!updated) {

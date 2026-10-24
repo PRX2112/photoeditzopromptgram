@@ -13,6 +13,8 @@ const CreatePostSchema = z.object({
   mediaType: z.string().nullable().optional().default("IMAGE"),
   blobUrl: z.string().nullable().optional(),
   blobPathname: z.string().nullable().optional(),
+  renderedImageUrl: z.string().nullable().optional(),
+  renderedBlobPathname: z.string().nullable().optional(),
   temporaryImageUrl: z.string().nullable().optional(),
   temporaryAssetKey: z.string().nullable().optional(),
   status: z.enum(["DRAFT", "SCHEDULED", "PUBLISHED"]),
@@ -52,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     const data = parsed.data;
     const keyword = data.commentKeyword.toUpperCase();
-    const finalBlobUrl = data.blobUrl || data.temporaryImageUrl || undefined;
+    const finalBlobUrl = data.renderedImageUrl || data.blobUrl || data.temporaryImageUrl || undefined;
 
     // 1. Create Post Record in Database
     const post = await dbService.createPost({
@@ -62,7 +64,11 @@ export async function POST(request: NextRequest) {
       commentKeyword: keyword,
       mediaType: data.mediaType || "IMAGE",
       blobUrl: finalBlobUrl,
-      blobPathname: data.blobPathname || undefined,
+      blobPathname: data.renderedBlobPathname || data.blobPathname || undefined,
+      renderedImageUrl: data.renderedImageUrl || undefined,
+      renderedBlobPathname: data.renderedBlobPathname || undefined,
+      renderedImageStatus: data.renderedImageUrl ? "READY_TO_PUBLISH" : "UPLOADED",
+      renderedAt: data.renderedImageUrl ? new Date().toISOString() : undefined,
       temporaryImageUrl: finalBlobUrl,
       temporaryAssetKey: data.temporaryAssetKey || undefined,
       imageUploadedAt: new Date().toISOString(),

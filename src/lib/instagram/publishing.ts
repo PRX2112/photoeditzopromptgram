@@ -3,6 +3,7 @@ import { instagramService } from "@/lib/instagram";
 import { queueService } from "@/lib/queue";
 import { dbService } from "@/lib/db-service";
 import { decryptToken } from "@/lib/crypto";
+import { combineCaptionAndHashtags } from "@/lib/gemini";
 
 export interface PublicationServiceResult {
   success: boolean;
@@ -61,7 +62,7 @@ export const instagramPublishingService = {
         return { success: false, postId, error: "Post not found" };
       }
 
-      const imageUrl = post.blobUrl || post.temporaryImageUrl;
+      const imageUrl = post.renderedImageUrl || post.blobUrl || post.temporaryImageUrl;
       if (!imageUrl) {
         await prisma.post.update({
           where: { id: postId },
@@ -74,7 +75,7 @@ export const instagramPublishingService = {
         return { success: false, postId, error: "No image URL available for Instagram publication" };
       }
 
-      const fullCaption = `${post.caption}\n\n${post.hashtags}`.trim();
+      const fullCaption = combineCaptionAndHashtags(post.caption, post.hashtags);
 
       // Check Meta Configuration
       if (!instagramService.isConfigured()) {
@@ -82,7 +83,7 @@ export const instagramPublishingService = {
         const mockMediaId = `1802${Date.now().toString().slice(-8)}`;
         const mockPermalink = `https://www.instagram.com/p/C${Math.random().toString(36).substring(2, 8)}/`;
 
-        // Transactional commit: Update post to PUBLISHED + enqueue CLEANUP_BLOB job
+        // Transactional commit: Update post to PUBLISHED + mark prompt isPublished + enqueue CLEANUP_BLOB job
         await prisma.$transaction(async (tx) => {
           await tx.post.update({
             where: { id: postId },
@@ -95,6 +96,16 @@ export const instagramPublishingService = {
               lastPublishError: null,
             },
           });
+
+          if (post.promptId) {
+            await tx.prompt.update({
+              where: { id: post.promptId },
+              data: {
+                isPublished: true,
+                publishedAt: new Date(),
+              },
+            });
+          }
 
           await tx.scheduledJob.create({
             data: {
@@ -211,6 +222,16 @@ export const instagramPublishingService = {
               lastPublishError: null,
             },
           });
+
+          if (post.promptId) {
+            await tx.prompt.update({
+              where: { id: post.promptId },
+              data: {
+                isPublished: true,
+                publishedAt: new Date(),
+              },
+            });
+          }
 
           await tx.scheduledJob.create({
             data: {
