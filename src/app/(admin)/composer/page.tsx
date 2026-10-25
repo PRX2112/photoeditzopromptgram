@@ -168,9 +168,12 @@ function ComposerContent() {
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Generation failed";
+      const isAuth = msg.toLowerCase().includes("unauthorized") || msg.includes("401");
       setStatusMessage({
         type: "error",
-        text: `Gemini service notice: ${msg}. You can manually write or edit the caption below.`,
+        text: isAuth
+          ? "Authentication required. Please sign in at /login to generate captions with Gemini AI."
+          : `Gemini service notice: ${msg}. You can manually write or edit the caption below.`,
       });
     } finally {
       setIsGeneratingCopy(false);

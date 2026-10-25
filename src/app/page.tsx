@@ -9,6 +9,6 @@ export default async function RootPage() {
   if (session) {
     redirect("/dashboard");
   } else {
-    redirect("/dashboard"); // Seamless direct navigation with session fallback
+    redirect("/login");
   }
 }
