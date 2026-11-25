@@ -21,8 +21,10 @@ import {
   ChevronRight,
   Layers,
   Wand2,
+  Zap,
 } from "lucide-react";
 import type { PromptItem } from "@/types";
+import { OneClickAutopilotModal } from "@/components/autopilot/OneClickAutopilotModal";
 
 function ComposerContent() {
   const searchParams = useSearchParams();
@@ -64,9 +66,10 @@ function ComposerContent() {
   const [scheduleTime, setScheduleTime] = useState("18:00");
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isAutopilotOpen, setIsAutopilotOpen] = useState(false);
 
-  // Fetch genuinely available prompts on mount
-  useEffect(() => {
+  // Fetch genuinely available prompts
+  const fetchAvailablePrompts = () => {
     setLoadingPrompts(true);
     fetch("/api/prompts?availableOnly=true")
       .then((res) => res.json())
@@ -84,6 +87,10 @@ function ComposerContent() {
       })
       .catch(() => {})
       .finally(() => setLoadingPrompts(false));
+  };
+
+  useEffect(() => {
+    fetchAvailablePrompts();
 
     // Also fetch connected Instagram account handle
     fetch("/api/instagram/status")
@@ -387,12 +394,22 @@ function ComposerContent() {
                 Only unposted prompts with available source images are shown. Assigned drafts or published prompts are excluded.
               </p>
             </div>
-            <Link
-              href="/prompts/new"
-              className="text-xs px-3 py-1.5 rounded-lg border border-[#252b39] bg-[#141720] text-amber-400 hover:text-amber-300"
-            >
-              + Create New Prompt
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAutopilotOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 text-xs font-semibold shadow-sm transition-all"
+              >
+                <Zap className="w-3.5 h-3.5 fill-amber-400" />
+                <span>1-Click AI Autopilot</span>
+              </button>
+              <Link
+                href="/prompts/new"
+                className="text-xs px-3 py-1.5 rounded-lg border border-[#252b39] bg-[#141720] text-amber-400 hover:text-amber-300"
+              >
+                + Create New Prompt
+              </Link>
+            </div>
           </div>
 
           {loadingPrompts ? (
@@ -408,12 +425,22 @@ function ComposerContent() {
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
                 All prompts in your library are either published, scheduled, or currently assigned to active drafts.
               </p>
-              <Link
-                href="/prompts/new"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-500 text-black text-xs font-semibold"
-              >
-                Create a New Prompt
-              </Link>
+              <div className="flex items-center justify-center gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAutopilotOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 text-black text-xs font-semibold hover:brightness-110 shadow-lg shadow-amber-500/20 transition-all"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-black" />
+                  <span>1-Click AI Studio Autopilot</span>
+                </button>
+                <Link
+                  href="/prompts/new"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[#232938] bg-[#141720] text-slate-300 hover:text-white text-xs font-semibold"
+                >
+                  Create Prompt Manually
+                </Link>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1111,6 +1138,13 @@ function ComposerContent() {
           </div>
         </div>
       )}
+
+      {/* 1-Click AI Studio Autopilot Modal */}
+      <OneClickAutopilotModal
+        isOpen={isAutopilotOpen}
+        onClose={() => setIsAutopilotOpen(false)}
+        onSuccess={fetchAvailablePrompts}
+      />
     </div>
   );
 }

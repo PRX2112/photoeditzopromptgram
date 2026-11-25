@@ -3,15 +3,15 @@
 
 > **Current Status**: Production-Ready / Live Operational  
 > **Repository Root**: `d:/VibingSites/automationtool/photoeditzopromptgram`  
-> **Framework**: Next.js 16.4.2 (App Router, Turbopack, React 19, TypeScript Strict Mode)  
+> **Framework**: Next.js 16.4.2 (App Router, Webpack, React 19, TypeScript Strict Mode)  
 > **Database**: Neon Serverless PostgreSQL with Prisma ORM 6.19.3 (Connection Pooled)  
 > **Storage**: Vercel Blob (`@vercel/blob`) with Binary Magic-Byte Inspection  
 > **Image Rendering**: FFmpeg Vertical 1080×1350 (4:5) Composition Engine with Bundled TrueType Font  
-> **AI Engine**: Google Gemini API (`@google/genai` with `gemini-3.5-flash-lite` & multi-tier fallbacks)  
+> **AI Engine**: Google Gemini API & Google Imagen 3 (`@google/genai` with `imagen-3.0-generate-002` & `gemini-2.5-flash`)  
 > **Meta API**: Instagram Graph API v21.0 & Messenger API for Instagram  
-> **Test Suite**: 54/54 Tests Passing (Vitest across 4 test suites)  
+> **Test Suite**: 61/61 Tests Passing (Vitest across 5 test suites)  
 > **Type Safety**: 0 TypeScript Compilation Errors (`npx tsc --noEmit`)  
-> **Build Status**: Production Build Verified (`npm run build` across 38 static/dynamic routes)
+> **Build Status**: Production Build Verified (`npm run build` across 34 static/dynamic routes)
 
 ---
 
@@ -22,11 +22,12 @@
 4. [Prompt-First Content & Publishing Workflow](#4-prompt-first-content--publishing-workflow)
 5. [CTA-First Instagram Caption & Social Copy Engine](#5-cta-first-instagram-caption--social-copy-engine)
 6. [FFmpeg Vertical 4:5 Composition Engine](#6-ffmpeg-vertical-45-composition-engine)
-7. [System Architecture & Codebase Map](#7-system-architecture--codebase-map)
-8. [Database Schema & Entity Specifications](#8-database-schema--entity-specifications)
-9. [API Route Specifications & Workflows](#9-api-route-specifications--workflows)
-10. [Engineering Challenges & Production Fixes](#10-engineering-challenges--production-fixes)
-11. [Operational Verification & Runbooks](#11-operational-verification--runbooks)
+7. [1-Click AI Studio Autopilot (Gemini + Imagen 3 + FFmpeg Loop)](#7-1-click-ai-studio-autopilot-gemini--imagen-3--ffmpeg-loop)
+8. [System Architecture & Codebase Map](#8-system-architecture--codebase-map)
+9. [Database Schema & Entity Specifications](#9-database-schema--entity-specifications)
+10. [API Route Specifications & Workflows](#10-api-route-specifications--workflows)
+11. [Engineering Challenges & Production Fixes](#11-engineering-challenges--production-fixes)
+12. [Operational Verification & Runbooks](#12-operational-verification--runbooks)
 
 ---
 
@@ -63,9 +64,10 @@ The application is fully operational, integrated with live production credential
 | **CTA-First AI Caption & Hashtags** | Google Gemini API & Photographic Fallback | **Live & Verified** | Strict Hook -> CTA (`👇 Comment {KEYWORD} to get the full photography prompt in your DMs!`) -> Supporting Line -> $\le 5$ hashtags. Case-insensitive deduplication on publish. |
 | **Database & Pooling** | Neon PostgreSQL | **Live & Synchronized** | Schema pushed (`prisma db push`), database seeded, pooled connection active on `ep-wandering-band-b4fe2o5y-pooler`. |
 | **Local Comment Sync** | `POST /api/instagram/sync-comments` | **Live & Verified** | Pulls comments on-demand from Meta Graph API without requiring active ngrok webhook tunnels during local development. |
-| **Test Automation** | Vitest Test Suite | **100% Pass (54/54)** | All unit, concurrency, CTA-first caption generation, and action-explaining image CTA strip tests passing across `caption-generation.test.ts`, `prompt-workflow.test.ts`, `image-lifecycle.test.ts`, and `dm-idempotency.test.ts`. |
+| **1-Click AI Studio Autopilot** | Gemini + Imagen 3 + FFmpeg + Meta | **Live & Verified** | One-click autonomous prompt concept ideation, Imagen 3 photo generation, Vercel Blob upload, FFmpeg 4:5 frame rendering, and conversion copy generation. |
+| **Test Automation** | Vitest Test Suite | **100% Pass (61/61)** | All unit, concurrency, CTA-first caption generation, action-explaining image CTA strip, and 1-Click Autopilot loop tests passing across `autopilot.test.ts`, `caption-generation.test.ts`, `prompt-workflow.test.ts`, `image-lifecycle.test.ts`, and `dm-idempotency.test.ts`. |
 | **Type Checking** | TypeScript Compiler | **Clean (0 errors)** | `npx tsc --noEmit` completes with zero errors. |
-| **Production Build** | Next.js 16 Turbopack | **Clean (38 routes)** | `npm run build` compiles all static pages and dynamic routes with zero runtime issues. |
+| **Production Build** | Next.js 16 Webpack | **Clean (34 routes)** | `npm run build` compiles all static pages and dynamic routes with zero runtime issues. |
 
 ---
 
@@ -282,7 +284,56 @@ Output canvas is standardized to **1080 × 1350 (4:5 portrait)**, Instagram's hi
 
 ---
 
-## 7. System Architecture & Codebase Map
+## 7. 1-Click AI Studio Autopilot (Gemini + Imagen 3 + FFmpeg Loop)
+
+Implemented in [`src/lib/gemini-autopilot.ts`](file:///d:/VibingSites/automationtool/photoeditzopromptgram/src/lib/gemini-autopilot.ts) with user interface in [`src/components/autopilot/OneClickAutopilotModal.tsx`](file:///d:/VibingSites/automationtool/photoeditzopromptgram/src/components/autopilot/OneClickAutopilotModal.tsx):
+
+### 7.1. Purpose & Core Objective
+The **1-Click AI Studio Autopilot** automates the entire creative and publishing lifecycle with a single click. Creators can select a curated photographic aesthetic or enter a custom theme, and the system autonomously executes every step required to produce an Instagram-ready post with a canonical public prompt.
+
+### 7.2. 7-Step Autonomous Execution Pipeline
+```
+[User Clicks "Generate Post"]
+             │
+             ▼
+1. Gemini Concept Generation (structured prompt, gear, lighting, keyword)
+             │
+             ▼
+2. Google Imagen 3 Photorealistic Rendering (3:4 portrait, 8k textures)
+             │
+             ▼
+3. Ephemeral Vercel Blob Upload (magic-byte validated temporary asset)
+             │
+             ▼
+4. Neon DB Prompt Persistence (immutable original prompt + collision-safe slug)
+             │
+             ▼
+5. FFmpeg 1080×1350 Composition (4:5 canvas + title header + dynamic COMMENT "{KEYWORD}" strip)
+             │
+             ▼
+6. CTA-First Instagram Copy Generation (Gemini hook + DM CTA + supporting line + ≤5 hashtags)
+             │
+             ▼
+7. Post Creation (Saved as DRAFT in Composer OR auto-published to Meta Instagram Graph API)
+```
+
+### 7.3. Fault Tolerance & Curated Photographic Fallbacks
+- **Network / API Resilience**: If the Google Gemini or Imagen 3 API is unreachable, rate-limited, or unauthorized, the engine gracefully utilizes a rich bank of curated photographic studio concepts and high-resolution procedural photographic buffers.
+- **Verbatim Canon**: The generated photography prompt is stored verbatim as `Prompt.originalPrompt` and is never overwritten.
+- **Safety Mode**: Defaults to `autoPublish: false`, routing the creator into the guided Composer with all assets pre-rendered so they can review in 5 seconds before dispatch. When `autoPublish: true` is selected, it immediately publishes to Instagram and logs the live permalink.
+
+### 7.4. Preset Visual Themes
+- `🎲 Surprise Me (Random Fresh Concept)`
+- `🎬 Cinematic Golden-Hour Portrait`
+- `💍 Romantic Vineyard Bridal Editorial`
+- `✨ Avant-Garde High-Fashion Studio`
+- `🏙️ Rainy Neon Cyberpunk Street`
+- `🌿 Minimalist Botanical Fine-Art`
+- `💡 Moody Chiaroscuro & Shadowplay`
+
+---
+
+## 8. System Architecture & Codebase Map
 
 ```
 photoeditzopromptgram/

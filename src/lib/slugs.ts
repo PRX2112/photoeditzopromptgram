@@ -43,14 +43,19 @@ export async function generateUniqueSlug(
   const checkExists =
     existenceChecker ||
     (async (slugToCheck: string) => {
-      const existing = await prisma.prompt.findFirst({
-        where: {
-          slug: slugToCheck,
-          ...(excludeId ? { id: { not: excludeId } } : {}),
-        },
-        select: { id: true },
-      });
-      return Boolean(existing);
+      try {
+        const existing = await prisma.prompt.findFirst({
+          where: {
+            slug: slugToCheck,
+            ...(excludeId ? { id: { not: excludeId } } : {}),
+          },
+          select: { id: true },
+        });
+        return Boolean(existing);
+      } catch {
+        // Graceful fallback if database connection is unreachable or offline
+        return false;
+      }
     });
 
   while (await checkExists(candidate)) {

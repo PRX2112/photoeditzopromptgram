@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { PostItem } from "@/types";
+import { OneClickAutopilotModal } from "@/components/autopilot/OneClickAutopilotModal";
 
 interface DashboardMetrics {
   totalPrompts: number;
@@ -56,6 +57,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [cleanupActionLoadingId, setCleanupActionLoadingId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isAutopilotOpen, setIsAutopilotOpen] = useState(false);
 
   const fetchDashboardData = async () => {
     try {
@@ -259,6 +261,13 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setIsAutopilotOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black text-xs font-bold transition-all shadow-md shadow-amber-500/10 hover:scale-[1.02]"
+            >
+              <Zap className="w-3.5 h-3.5 fill-current" />
+              <span>1-Click AI Autopilot</span>
+            </button>
+            <button
               onClick={fetchDashboardData}
               disabled={loading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a1e27] hover:bg-[#222733] border border-[#2b313e] text-xs text-slate-300 font-medium transition-colors disabled:opacity-50"
@@ -268,12 +277,39 @@ export default function DashboardPage() {
             </button>
             <Link
               href="/composer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-semibold transition-all hover:scale-[1.02]"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#222834] hover:bg-[#2d3545] border border-[#353e50] text-slate-200 text-xs font-medium transition-colors"
             >
-              <Send className="w-3.5 h-3.5" />
+              <Send className="w-3.5 h-3.5 text-amber-400" />
               <span>Compose Post</span>
             </Link>
           </div>
+        </div>
+
+        {/* 1-Click AI Studio Autopilot Highlight Banner */}
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-[#161a24] to-[#12141a] border border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-black shrink-0 shadow-lg shadow-amber-500/20">
+              <Zap className="w-6 h-6 fill-current" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white">Autonomous AI Post Generator</h3>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                  NEW
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-1 max-w-xl leading-relaxed">
+                One click generates a complete photography prompt with Gemini, creates a photorealistic image with Imagen 3, renders a 4:5 vertical frame with the CTA strip in FFmpeg, and crafts conversion copy.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsAutopilotOpen(true)}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black text-xs font-bold transition-all shadow-lg shadow-amber-500/20 shrink-0 hover:scale-[1.02]"
+          >
+            <Sparkles className="w-4 h-4 fill-current" />
+            <span>Generate Complete Post with AI</span>
+          </button>
         </div>
 
         {/* 6 Key Performance Metric Cards */}
@@ -678,6 +714,13 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* 1-Click AI Studio Autopilot Modal */}
+      <OneClickAutopilotModal
+        isOpen={isAutopilotOpen}
+        onClose={() => setIsAutopilotOpen(false)}
+        onSuccess={fetchDashboardData}
+      />
     </AdminShell>
   );
 }
